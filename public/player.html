@@ -90,6 +90,8 @@ const fmt = (s) => {
 
 let ws = null, player = null, ready = false, unlocked = false;
 let st = null, loadedId = null, lastSentPos = -1;
+// true cho tới lần nạp bài đầu tiên kể từ khi mở trang — xem apply().
+let firstLoad = true;
 let pending = null; // state that arrived before the API was ready
 let stuckSince = 0;  // theo dõi trường hợp tưởng phát được mà thật ra bị chặn
 
@@ -211,10 +213,19 @@ function apply(s) {
   try { player.setVolume(s.playerVolume ?? s.volume); } catch (e) {}
 
   if (cur.id !== loadedId) {
+    // Lần nạp ĐẦU TIÊN kể từ khi mở trang là lúc phát
+    // tiếp sau khi Pi/trình duyệt khởi động lại: vào lại đúng giây đang nghe dở
+    // thay vì hát lại từ đầu. Các lần chuyển bài sau đó luôn bắt đầu từ 0 —
+    // vị trí lúc đó có thể còn là của bài trước.
+    // Dùng cờ riêng chứ không dựa vào loadedId === null: xoá hết hàng chờ cũng
+    // đặt loadedId về null, và bài thêm sau đó không được "phát tiếp" giữa chừng.
+    const resumeAt = firstLoad && s.position > 5 ? Math.floor(s.position) : 0;
+    firstLoad = false;
     loadedId = cur.id;
     try {
-      if (s.playing) player.loadVideoById(cur.id);
-      else player.cueVideoById(cur.id);
+      const opts = { videoId: cur.id, startSeconds: resumeAt };
+      if (s.playing) player.loadVideoById(opts);
+      else player.cueVideoById(opts);
     } catch (e) {}
     return;
   }

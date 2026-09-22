@@ -25,7 +25,7 @@ const sysAudio = require('./audio.js');
 // Phải khớp với hằng BUILD trong public/remote.html. Trang điều khiển so sánh
 // hai giá trị này và cảnh báo nếu lệch — dấu hiệu service chưa được restart sau
 // khi cài bản mới (file tĩnh đọc từ đĩa nên mới, còn server.js vẫn là bản cũ).
-const BUILD = '2026-08-29.2';
+const BUILD = '2026-08-30.1';
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const HOST = process.env.HOST || '0.0.0.0';
@@ -394,7 +394,203 @@ function topTracks(limit = 24) {
 // Ghi xuống đĩa theo nhịp, không ghi mỗi lần đếm — thẻ SD có hạn số lần ghi.
 const historyTimer = setInterval(saveHistory, 60_000);
 historyTimer.unref?.();
-process.on('exit', saveHistory);
+
+// ---------------------------------------------------------------------------
+// Giữ hàng chờ qua các lần khởi động lại
+//
+// Trước đây hàng chờ chỉ nằm trong bộ nhớ: restart service, cài bản mới, hay
+// Pi mất điện là mất trắng. Giờ ghi xuống data/ và nạp lại lúc khởi động.
+//
+// Tách HAI file, vì hai thứ thay đổi với nhịp rất khác nhau:
+//   queue.json    — danh sách bài + cài đặt. Đổi khi có người thêm/xoá/chuyển
+//                   bài, nên ghi ngay (gom trong 1 giây). File có thể tới
+//                   ~100 KB với 300 bài.
+//   playhead.json — đang ở giây thứ mấy của bài nào. Đổi MỖI GIÂY khi đang
+//                   phát, nhưng chỉ vài chục byte, và chỉ ghi 20 giây một lần.
+// Gộp làm một thì cứ 20 giây lại ghi lại cả 100 KB — cả ngày là vài trăm MB
+// ghi vô ích lên thẻ SD, thứ có giới hạn số lần ghi.
+//
+// Ghi kiểu "file tạm rồi đổi tên": đổi tên là thao tác nguyên tử, nên mất điện
+// giữa chừng thì còn nguyên bản cũ, chứ không bao giờ ra một file JSON bị cụt
+// làm hỏng luôn lần khởi động sau.
+// ---------------------------------------------------------------------------
+
+const QUEUE_PATH = path.join(DATA_DIR, 'queue.json');
+const PLAYHEAD_PATH = path.join(DATA_DIR, 'playhead.json');
+const QUEUE_SAVE_MS = 1000;
+const PLAYHEAD_SAVE_MS = 20_000;
+// Đang phát lúc tắt thì phát tiếp — nhưng chỉ khi máy phát nối lại SỚM. Pi mất
+// điện cả đêm rồi 7 giờ sáng có điện lại thì không nên tự dưng mở nhạc to.
+const RESUME_WINDOW_MS = 3 * 60 * 1000;
+
+const BOOT_AT = Date.now();
+let resumePlaying = false;
+let lastQueueJson = '';
+let lastPlayheadJson = '';
+let queueTimer = null;
+let playheadTimer = null;
+
+function writeAtomic(file, text) {
+  fs.mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
+  const tmp = file + '.tmp';
+  fs.writeFileSync(tmp, text, { mode: 0o600 });
+  fs.renameSync(tmp, file);
+}
+
+function queueJson() {
+  return JSON.stringify({
+    v: 1,
+    queue: state.queue,
+    index: state.index,
+    playing: state.playing,
+    volume: state.volume,
+    repeat: state.repeat,
+    shuffle: state.shuffle,
+    autoRadio: state.autoRadio,
+    station: state.station,
+    stationLabel: state.stationLabel,
+    sleepAt: state.sleepAt,
+  });
+}
+
+function saveQueueNow() {
+  clearTimeout(queueTimer);
+  queueTimer = null;
+  const text = queueJson();
+  // Phần lớn các lần broadcast không đổi gì trong hàng chờ (đổi số người kết
+  // nối, trạng thái loa...). So chuỗi rẻ hơn nhiều so với một lần ghi thẻ SD.
+  if (text === lastQueueJson) return;
+  try {
+    writeAtomic(QUEUE_PATH, text);
+    lastQueueJson = text;
+  } catch (err) {
+    console.error('[queue] không ghi được:', err.message);
+  }
+}
+
+function savePlayheadNow() {
+  clearTimeout(playheadTimer);
+  playheadTimer = null;
+  const cur = current();
+  const text = JSON.stringify({
+    uid: cur ? cur.uid : null,
+    position: Math.floor(state.position || 0),
+  });
+  if (text === lastPlayheadJson) return;
+  try {
+    writeAtomic(PLAYHEAD_PATH, text);
+    lastPlayheadJson = text;
+  } catch (err) {
+    console.error('[queue] không ghi được vị trí phát:', err.message);
+  }
+}
+
+function saveQueueSoon() {
+  if (!queueTimer) {
+    queueTimer = setTimeout(saveQueueNow, QUEUE_SAVE_MS);
+    queueTimer.unref?.();
+  }
+}
+
+function savePlayheadSoon() {
+  if (!playheadTimer) {
+    playheadTimer = setTimeout(savePlayheadNow, PLAYHEAD_SAVE_MS);
+    playheadTimer.unref?.();
+  }
+}
+
+// Làm sạch từng bài khi nạp: file này nằm trên đĩa, sửa tay hay hỏng một nửa
+// thì server vẫn phải khởi động được, chỉ bỏ qua những dòng không dùng được.
+function cleanTrack(t) {
+  if (!t || typeof t !== 'object') return null;
+  const id = String(t.id || '');
+  if (!/^[\w-]{11}$/.test(id)) return null;
+  return {
+    uid: typeof t.uid === 'string' && t.uid ? t.uid : nextUid(),
+    id,
+    title: String(t.title || id).slice(0, 300),
+    author: String(t.author || '').slice(0, 200),
+    duration: Number(t.duration) || 0,
+    thumb: String(t.thumb || `https://i.ytimg.com/vi/${id}/mqdefault.jpg`),
+    addedBy: String(t.addedBy || '').slice(0, 40),
+  };
+}
+
+function loadQueue() {
+  let saved;
+  try {
+    saved = JSON.parse(fs.readFileSync(QUEUE_PATH, 'utf8'));
+  } catch (err) {
+    if (err.code !== 'ENOENT') console.warn('[queue] bỏ qua file hàng chờ hỏng:', err.message);
+    return false;
+  }
+  if (!saved || !Array.isArray(saved.queue)) return false;
+
+  const seen = new Set();
+  const queue = saved.queue.map(cleanTrack).filter((t) => {
+    if (!t || seen.has(t.uid)) return false;   // uid trùng thì nút xoá/nhảy bài sẽ nhầm
+    seen.add(t.uid);
+    return true;
+  }).slice(-MAX_QUEUE);
+
+  state.queue = queue;
+  const idx = Number.isInteger(saved.index) ? saved.index : -1;
+  state.index = queue.length ? Math.min(Math.max(idx, -1), queue.length - 1) : -1;
+  if (Number.isFinite(saved.volume)) state.volume = Math.max(0, Math.min(100, saved.volume));
+  if (['off', 'all', 'one'].includes(saved.repeat)) state.repeat = saved.repeat;
+  state.shuffle = !!saved.shuffle;
+  state.autoRadio = !!saved.autoRadio;
+  state.station = typeof saved.station === 'string' ? saved.station : null;
+  state.stationLabel = state.station ? String(saved.stationLabel || '') || null : null;
+
+  // Hẹn giờ tắt đã qua trong lúc server nghỉ = người ta muốn nó dừng rồi.
+  const sleepPassed = saved.sleepAt && saved.sleepAt <= Date.now();
+  resumePlaying = !!saved.playing && !sleepPassed && state.index >= 0;
+  state.playing = false;   // chờ máy phát nối lại (xem resumeIfDue)
+
+  // Vị trí trong bài: chỉ nhận nếu đúng là bài đang đứng.
+  try {
+    const ph = JSON.parse(fs.readFileSync(PLAYHEAD_PATH, 'utf8'));
+    const cur = current();
+    if (cur && ph && ph.uid === cur.uid && Number.isFinite(ph.position)) {
+      state.position = Math.max(0, ph.position);
+    }
+  } catch {}
+
+  lastQueueJson = queueJson();
+  console.log(`[queue] đã nạp lại ${queue.length} bài` +
+    (current() ? `, đang ở: ${current().title}` : '') +
+    (resumePlaying ? ' (sẽ phát tiếp khi máy phát nối lại)' : ''));
+  return true;
+}
+
+/** Gọi khi một máy phát vừa nối vào. Trả true nếu vừa bật phát lại. */
+function resumeIfDue() {
+  if (!resumePlaying) return false;
+  resumePlaying = false;
+  if (Date.now() - BOOT_AT > RESUME_WINDOW_MS) return false;
+  if (!current()) return false;
+  state.playing = true;
+  return true;
+}
+
+// systemctl restart gửi SIGTERM. Node mặc định chết NGAY khi nhận SIGTERM mà
+// KHÔNG chạy sự kiện 'exit' — nên trước đây lịch sử nghe cũng mất tới 60 giây
+// cuối mỗi lần restart. Bắt tín hiệu để ghi hết xuống đĩa rồi mới thoát.
+function flushAll() {
+  saveQueueNow();
+  savePlayheadNow();
+  saveHistory();
+}
+process.on('exit', flushAll);
+for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP']) {
+  process.on(sig, () => {
+    flushAll();
+    process.exit(0);
+  });
+}
+
+loadQueue();
 
 // ---------------------------------------------------------------------------
 // YouTube Data API v3 — cách đăng nhập chính thức, dùng OAuth client của bạn
@@ -1664,6 +1860,10 @@ function send(ws, obj) {
 }
 
 function broadcast() {
+  // Mọi thay đổi trạng thái đều đi qua đây, nên móc việc lưu vào đây là đủ —
+  // không phải rải lệnh lưu vào từng lệnh thêm/xoá/chuyển bài.
+  saveQueueSoon();
+  savePlayheadSoon();
   const msg = JSON.stringify({ type: 'state', state: snapshot() });
   for (const ws of wss.clients) if (ws.readyState === ws.OPEN) ws.send(msg);
 }
@@ -1992,6 +2192,7 @@ wss.on('connection', (ws) => {
       ws.role = m.role === 'player' ? 'player' : 'remote';
       ws.name = String(m.name || '').slice(0, 40);
       recount();
+      if (ws.role === 'player') resumeIfDue();
       send(ws, { type: 'state', state: snapshot() });
       broadcast();
       return;
@@ -2004,6 +2205,7 @@ wss.on('connection', (ws) => {
         const cur = current();
         if (cur && m.duration && !cur.duration) cur.duration = Number(m.duration);
         maybeCountPlay(cur, state.position, state.duration);
+        savePlayheadSoon();
         const tick = JSON.stringify({
           type: 'tick',
           position: state.position,
@@ -2124,6 +2326,12 @@ module.exports = {
   MIX_SIZE,
   notePlay,
   maybeCountPlay,
+  saveQueueNow,
+  savePlayheadNow,
+  loadQueue,
+  resumeIfDue,
+  QUEUE_PATH,
+  PLAYHEAD_PATH,
   topTracks,
   state,
   gapi,

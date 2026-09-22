@@ -815,18 +815,37 @@ bằng nút **Đăng xuất**, hoặc bất cứ lúc nào tại
 - **Máy phát cần có loa và trình duyệt hiện đại** (Chromium). Raspberry Pi OS
   Desktop là đủ; bản Lite không có trình duyệt nên không làm máy phát được.
 
+## Hàng chờ còn nguyên khi khởi động lại
+
+Hàng chờ được lưu vào `data/queue.json`, vị trí đang nghe vào `data/playhead.json`.
+Restart service, cài bản mới, hay Pi mất điện: bật lên là còn nguyên danh sách,
+đúng bài đang phát, đúng giây đang nghe dở, cùng âm lượng và chế độ lặp.
+
+- **Đang phát lúc tắt** thì máy phát nối lại là phát tiếp — nhưng chỉ khi nối
+  lại trong vòng 3 phút. Mất điện cả đêm thì sáng ra hàng chờ vẫn còn, nhưng
+  đứng yên chờ bấm Phát, không tự mở nhạc.
+- Hẹn giờ tắt đã tới trong lúc máy nghỉ thì cũng không tự phát lại.
+- Nhẹ cho thẻ SD: danh sách bài chỉ ghi khi có thay đổi; vị trí trong bài là
+  file vài chục byte, 20 giây mới ghi một lần.
+- Ghi kiểu file tạm rồi đổi tên, nên mất điện giữa lúc ghi vẫn còn bản cũ
+  nguyên vẹn. File hỏng hay bị sửa bậy thì server bỏ qua dòng hỏng và vẫn chạy.
+
+Muốn xoá sạch hàng chờ khi khởi động: `sudo rm /opt/yt-jukebox/data/queue.json`
+rồi restart — hoặc bấm nút xoá hàng chờ trên điện thoại như bình thường.
+
 ## Kiểm thử
 
 ```bash
-npm test                 # chạy cả năm bộ
+npm test                 # chạy cả sáu bộ
 node test/selftest.js    # 41 bài: parser, lọc bài, ghép playlist, ẩn bài, luồng player<->remote
 node test/gapitest.js    # 18 bài: YouTube Data API (fetch giả lập)
 node test/audiotest.js   #  7 bài: âm lượng loa máy chủ (pactl giả lập)
+node test/persisttest.js # 11 bài: hàng chờ còn nguyên sau restart / mất điện
 node test/shelltest.js   #  9 bài: script cài đặt (dọn tên miền cũ, launcher kiosk)
 node test/uitest.js      # 78 bài: giao diện thật bằng Chromium (cần playwright)
 ```
 
-Bốn bộ đầu không cần internet. `uitest.js` cần `npm install -D playwright`; nếu
+Năm bộ đầu không cần internet. `uitest.js` cần `npm install -D playwright`; nếu
 bản Chromium đi kèm không khớp, đặt `CHROME_PATH` trỏ tới Chromium có sẵn.
 
 **Những chỗ không kiểm được ở máy phát triển:** container bị YouTube chặn (403),
@@ -847,11 +866,12 @@ yt-jukebox/
 │   ├── player.html        # máy nối loa
 │   ├── remote.html        # trang điều khiển
 │   └── favicon.svg
-├── data/                  # token đăng nhập (tự tạo, quyền 600, đừng commit)
+├── data/                  # token, hàng chờ, lịch sử nghe (tự tạo, quyền 600, đừng commit)
 ├── test/
 │   ├── selftest.js
 │   ├── gapitest.js
 │   ├── audiotest.js
+│   ├── persisttest.js
 │   ├── shelltest.js
 │   └── uitest.js
 ├── yt-jukebox.service     # systemd unit
