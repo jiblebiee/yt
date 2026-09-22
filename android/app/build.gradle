@@ -1,0 +1,34 @@
+plugins { id 'com.android.application' }
+
+android {
+  namespace 'vn.jukebox.remote'
+  compileSdk 34
+
+  defaultConfig {
+    applicationId "vn.jukebox.remote"
+    minSdk 24
+    targetSdk 34
+    versionCode 1
+    versionName "1.0"
+    // Địa chỉ điền sẵn ở lần mở app đầu tiên (người dùng sửa được ngay lúc đó).
+    // Remote dùng IP của Pi. Phần tên miền nội bộ đã bỏ hẳn cho đỡ phức tạp.
+    resValue "string", "default_server", "http://192.168.1.50"
+  }
+
+  buildTypes {
+    release {
+      minifyEnabled false
+      signingConfig signingConfigs.debug
+    }
+  }
+
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+}
+
+dependencies {
+  implementation 'androidx.appcompat:appcompat:1.7.0'
+  implementation 'androidx.webkit:webkit:1.11.0'
+}

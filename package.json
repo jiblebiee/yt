@@ -1,0 +1,22 @@
+{
+  "name": "yt-jukebox",
+  "version": "1.0.0",
+  "description": "Internal YouTube jukebox - Volumio-style. Audio plays only on the machine that has /player open.",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/selftest.js && node test/gapitest.js && node test/audiotest.js && node test/shelltest.js && node test/uitest.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.22.2",
+    "ws": "^8.21.3",
+    "youtubei.js": "^18.0.0"
+  },
+  "devDependencies": {
+    "playwright": "^1.62.1"
+  }
+}

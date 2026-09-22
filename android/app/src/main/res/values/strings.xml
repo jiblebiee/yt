@@ -1,0 +1,10 @@
+<resources>
+  <string name="app_name">Jukebox</string>
+  <string name="server_title">Địa chỉ máy chủ Jukebox</string>
+  <string name="server_hint">http://192.168.1.50</string>
+  <string name="save">Lưu</string>
+  <string name="cancel">Huỷ</string>
+  <string name="retry">Thử lại</string>
+  <string name="change_server">Đổi địa chỉ</string>
+  <string name="load_failed">Không kết nối được máy chủ.\nKiểm tra điện thoại đã ở cùng mạng Wi‑Fi với Raspberry Pi chưa.</string>
+</resources>

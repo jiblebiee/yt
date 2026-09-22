@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<title>Jukebox · Máy phát</title>
+<style>
+  :root{
+    --bg:#07090d; --panel:#11151d; --line:#1f2632;
+    --fg:#e9edf5; --muted:#8b97ab; --accent:#4ade80;
+  }
+  *{box-sizing:border-box}
+  html{touch-action:manipulation}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    overflow:hidden;display:flex;align-items:center;justify-content:center}
+  #art-bg{position:fixed;inset:-8%;background-size:cover;background-position:center;
+    filter:blur(60px) saturate(1.5) brightness(.42);transform:scale(1.15);
+    transition:background-image .6s ease;z-index:0}
+  #yt{position:fixed;width:1px;height:1px;opacity:.01;pointer-events:none;left:0;top:0}
+  main{position:relative;z-index:1;text-align:center;padding:32px;max-width:820px;width:100%}
+  .art{width:min(46vh,380px);aspect-ratio:1;margin:0 auto 32px;border-radius:20px;
+    background:#0d1117 center/cover no-repeat;box-shadow:0 30px 80px rgba(0,0,0,.65);
+    display:grid;place-items:center;font-size:64px;color:#2b3444}
+  h1{font-size:clamp(22px,3.4vw,36px);margin:0 0 10px;line-height:1.25;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .by{color:var(--muted);font-size:16px;margin:0 0 28px}
+  .bar{height:6px;background:#1c2431;border-radius:99px;overflow:hidden;margin-bottom:10px}
+  .bar>i{display:block;height:100%;width:0;background:var(--accent);border-radius:99px;
+    transition:width .35s linear}
+  .times{display:flex;justify-content:space-between;color:var(--muted);
+    font-variant-numeric:tabular-nums;font-size:14px}
+  .status{position:fixed;top:0;left:0;right:0;z-index:2;padding:14px 20px;
+    display:flex;gap:14px;align-items:center;font-size:13px;color:var(--muted)}
+  .dot{width:9px;height:9px;border-radius:50%;background:#f87171;flex:none}
+  .dot.on{background:var(--accent);box-shadow:0 0 12px var(--accent)}
+  .url{margin-left:auto;font-family:ui-monospace,Menlo,monospace;color:#67748c}
+  .gate{position:fixed;inset:0;z-index:9;background:rgba(6,8,12,.94);
+    display:grid;place-items:center;text-align:center;padding:24px;
+    backdrop-filter:blur(6px)}
+  .gate h2{font-size:26px;margin:0 0 12px}
+  .gate p{color:var(--muted);max-width:440px;margin:0 auto 26px;line-height:1.6}
+  button.big{background:var(--accent);color:#06210f;border:0;border-radius:99px;
+    padding:16px 44px;font-size:18px;font-weight:700;cursor:pointer}
+  button.big:hover{filter:brightness(1.08)}
+  .idle{color:var(--muted);font-size:19px}
+  .hint{margin-top:22px;color:#5f6b80;font-size:13px}
+</style>
+</head>
+<body>
+<div id="art-bg"></div>
+<div id="yt"></div>
+
+<div class="status">
+  <span class="dot" id="dot"></span>
+  <span id="conn">Đang kết nối…</span>
+  <span id="remotes"></span>
+  <span class="url" id="url"></span>
+</div>
+
+<main>
+  <div class="art" id="art">♪</div>
+  <h1 id="title" class="idle">Chưa có bài nào trong hàng chờ</h1>
+  <p class="by" id="author">Mở trang điều khiển trên điện thoại để chọn nhạc</p>
+  <div class="bar"><i id="fill"></i></div>
+  <div class="times"><span id="tcur">0:00</span><span id="tdur">0:00</span></div>
+</main>
+
+<div class="gate" id="gate">
+  <div>
+    <h2>Máy phát nhạc</h2>
+    <p>Đây là máy nối loa. Bấm nút bên dưới một lần để trình duyệt cho phép
+       phát âm thanh, sau đó cứ để trang này mở.</p>
+    <button class="big" id="startBtn">Bật loa</button>
+    <div class="hint" id="gateHint"></div>
+  </div>
+</div>
+
+<script src="https://www.youtube.com/iframe_api"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+const fmt = (s) => {
+  s = Math.max(0, Math.floor(s || 0));
+  const m = Math.floor(s / 60), h = Math.floor(m / 60);
+  return h ? `${h}:${String(m % 60).padStart(2,'0')}:${String(s % 60).padStart(2,'0')}`
+           : `${m}:${String(s % 60).padStart(2,'0')}`;
+};
+
+let ws = null, player = null, ready = false, unlocked = false;
+let st = null, loadedId = null, lastSentPos = -1;
+let pending = null; // state that arrived before the API was ready
+let stuckSince = 0;  // theo dõi trường hợp tưởng phát được mà thật ra bị chặn
+
+// Đoạn WAV im lặng cực ngắn, chỉ dùng để thử xem trình duyệt có cho tự phát không.
+const SILENT_WAV =
+  'data:audio/wav;base64,UklGRi4AAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoAAACAgICAgICAgICA';
+
+/**
+ * Trình duyệt có cho phát âm thanh mà không cần người dùng bấm không?
+ *
+ * Chromium chạy kiosk với cờ --autoplay-policy=no-user-gesture-required thì
+ * cho phép -> bỏ luôn màn hình "Bật loa", máy tự phát khi Pi khởi động.
+ * Chrome thường thì chặn -> vẫn phải bấm một lần.
+ */
+async function autoplayAllowed() {
+  try {
+    if (typeof navigator.getAutoplayPolicy === 'function') {
+      return navigator.getAutoplayPolicy('mediaelement') === 'allowed';
+    }
+  } catch (e) {}
+  // Trình duyệt không có API trên: thử phát thật một đoạn im lặng.
+  try {
+    const a = new Audio(SILENT_WAV);
+    a.volume = 0.01;
+    await a.play();
+    a.pause();
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+$('url').textContent = location.host;
+$('gateHint').textContent = 'Điều khiển tại: http://' + location.host + '/remote';
+
+// --- YouTube IFrame API ------------------------------------------------
+window.onYouTubeIframeAPIReady = () => {
+  player = new YT.Player('yt', {
+    height: '1', width: '1',
+    playerVars: { autoplay: 0, controls: 0, disablekb: 1, playsinline: 1, rel: 0 },
+    events: {
+      onReady: () => { ready = true; if (pending) apply(pending); },
+      onStateChange: (e) => {
+        if (e.data === YT.PlayerState.ENDED) sendWs({ type: 'ended' });
+        if (e.data === YT.PlayerState.PLAYING || e.data === YT.PlayerState.PAUSED) {
+          sendWs({ type: 'playstate', playing: e.data === YT.PlayerState.PLAYING });
+        }
+      },
+      onError: (e) => sendWs({ type: 'error', code: e.data }),
+    },
+  });
+};
+
+function unlock(auto) {
+  unlocked = true;
+  stuckSince = 0;
+  $('gate').style.display = 'none';
+  if (!auto) {
+    // Gọi playVideo() ngay trong cú click để trình duyệt ghi nhận thao tác.
+    try { player && player.playVideo && player.playVideo(); } catch (e) {}
+  }
+  if (st) apply(st);
+}
+
+$('startBtn').onclick = () => unlock(false);
+
+/** Bị chặn thật thì hiện lại cổng, kèm lý do. */
+function showGate(reason) {
+  unlocked = false;
+  $('gate').style.display = '';
+  if (reason) $('gateHint').textContent = reason;
+}
+
+// Tự dò ngay khi tải trang: cho phép thì không bao giờ hiện màn hình "Bật loa".
+autoplayAllowed().then((allowed) => {
+  if (allowed) {
+    console.log('[player] trình duyệt cho tự phát -> bỏ qua bước Bật loa');
+    unlock(true);
+  }
+});
+
+// --- WebSocket ---------------------------------------------------------
+function sendWs(o) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }
+
+function connect() {
+  ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
+  ws.onopen = () => {
+    $('dot').classList.add('on');
+    $('conn').textContent = 'Đã kết nối';
+    sendWs({ type: 'hello', role: 'player' });
+  };
+  ws.onclose = () => {
+    $('dot').classList.remove('on');
+    $('conn').textContent = 'Mất kết nối — đang thử lại…';
+    setTimeout(connect, 2000);
+  };
+  ws.onmessage = (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.type === 'state') { st = m.state; render(st); ready ? apply(st) : (pending = st); }
+    else if (m.type === 'cmd' && m.cmd === 'seek' && ready) {
+      try { player.seekTo(m.to, true); } catch (e) {}
+    }
+  };
+}
+connect();
+
+// --- Apply server state to the actual player ---------------------------
+function apply(s) {
+  pending = null;
+  if (!ready || !unlocked) return;
+  const cur = s.current;
+
+  if (!cur) {
+    if (loadedId) { try { player.stopVideo(); } catch (e) {} loadedId = null; }
+    return;
+  }
+  // playerVolume, không phải volume: khi thanh âm lượng đang chỉnh loa thật của
+  // máy chủ thì trình phát phải để 100%, nếu không hai mức nhân với nhau.
+  try { player.setVolume(s.playerVolume ?? s.volume); } catch (e) {}
+
+  if (cur.id !== loadedId) {
+    loadedId = cur.id;
+    try {
+      if (s.playing) player.loadVideoById(cur.id);
+      else player.cueVideoById(cur.id);
+    } catch (e) {}
+    return;
+  }
+  const pstate = player.getPlayerState ? player.getPlayerState() : -1;
+  if (s.playing && pstate !== YT.PlayerState.PLAYING && pstate !== YT.PlayerState.BUFFERING) {
+    try { player.playVideo(); } catch (e) {}
+  } else if (!s.playing && pstate === YT.PlayerState.PLAYING) {
+    try { player.pauseVideo(); } catch (e) {}
+  }
+}
+
+// --- Display -----------------------------------------------------------
+function render(s) {
+  const cur = s.current;
+  $('remotes').textContent = s.remotes + ' điều khiển đang kết nối';
+  if (!cur) {
+    $('title').textContent = 'Chưa có bài nào trong hàng chờ';
+    $('title').classList.add('idle');
+    $('author').textContent = 'Mở http://' + location.host + '/remote để chọn nhạc';
+    $('art').style.backgroundImage = ''; $('art').textContent = '♪';
+    $('art-bg').style.backgroundImage = '';
+    $('fill').style.width = '0'; $('tcur').textContent = '0:00'; $('tdur').textContent = '0:00';
+    return;
+  }
+  $('title').textContent = cur.title;
+  $('title').classList.remove('idle');
+  $('author').textContent = (cur.author || '') + (s.playing ? '' : '  ·  ⏸ tạm dừng');
+  $('art').textContent = '';
+  $('art').style.backgroundImage = `url(${cur.thumb})`;
+  $('art-bg').style.backgroundImage = `url(${cur.thumb})`;
+}
+
+// --- Progress reporting ------------------------------------------------
+setInterval(() => {
+  if (!ready || !st || !st.current) return;
+  let pos = 0, dur = 0;
+  try { pos = player.getCurrentTime() || 0; dur = player.getDuration() || 0; } catch (e) { return; }
+  $('tcur').textContent = fmt(pos);
+  $('tdur').textContent = fmt(dur);
+  $('fill').style.width = dur ? (pos / dur * 100).toFixed(2) + '%' : '0';
+  const moved = Math.abs(pos - lastSentPos) >= 0.5;
+  if (moved) {
+    lastSentPos = pos;
+    sendWs({ type: 'progress', position: pos, duration: dur });
+  }
+
+  // Canh chừng: server bảo đang phát, ta tưởng đã mở khoá, nhưng vị trí đứng
+  // yên -> trình duyệt vẫn chặn tự phát. Hiện lại cổng để có người bấm.
+  if (!unlocked || !st.playing) { stuckSince = 0; return; }
+  let pstate = -1;
+  try { pstate = player.getPlayerState(); } catch (e) {}
+  if (moved || pstate === YT.PlayerState.BUFFERING) {
+    stuckSince = 0;
+    return;
+  }
+  if (!stuckSince) stuckSince = Date.now();
+  else if (Date.now() - stuckSince > 10000) {
+    stuckSince = 0;
+    showGate('Trình duyệt đang chặn tự phát — bấm nút bên trên một lần.');
+  }
+}, 1000);
+</script>
+</body>
+</html>

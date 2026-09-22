@@ -1,0 +1,20 @@
+services:
+  jukebox:
+    build: .
+    image: yt-jukebox
+    container_name: yt-jukebox
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      # Token đăng nhập + lựa chọn kênh. Giữ lại khi dựng lại container.
+      - ./data:/app/data
+    environment:
+      - PORT=3000
+      - HOST=0.0.0.0
+    # Log xoay vòng — trên thẻ SD của Pi thì log vô hạn là cách hỏng thẻ nhanh nhất.
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"

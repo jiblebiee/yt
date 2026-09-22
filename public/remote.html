@@ -1,0 +1,1639 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b0f16">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Jukebox">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Jukebox · Điều khiển</title>
+<style>
+  :root{
+    --bg:#0b0f16; --panel:#141a24; --panel2:#1a2230; --line:#232d3d;
+    --fg:#e9edf5; --muted:#8b97ab; --accent:#4ade80; --accent-ink:#06210f;
+    --danger:#f87171;
+
+    /* Vùng an toàn của máy có tai thỏ / thanh trạng thái đè lên trang.
+       iPhone khi mở từ biểu tượng ngoài màn hình chính chạy TOÀN màn hình:
+       nội dung nằm ngay dưới đồng hồ và cột sóng, che mất chữ. Gói vào biến để
+       chỗ nào cũng dùng được, và để bài kiểm thử giả lập được máy có tai thỏ. */
+    /* Nhịp chuyển động dùng chung. Gom vào biến để mọi thứ chuyển động
+       cùng một "tính cách", thay vì mỗi chỗ một kiểu -> nhìn rời rạc.
+       Đường cong này chạy nhanh lúc đầu rồi hãm dần, giống vật thật dừng lại,
+       nên không có cảm giác giật một phát rồi đứng khựng như 'ease'. */
+    --ease: cubic-bezier(.22,.61,.36,1);
+    --ease-soft: cubic-bezier(.33,1,.68,1);
+    --t-fast: .13s;
+    --t-med: .22s;
+    --t-slow: .34s;
+
+    --sat: env(safe-area-inset-top, 0px);
+    --sar: env(safe-area-inset-right, 0px);
+    --sab: env(safe-area-inset-bottom, 0px);
+    --sal: env(safe-area-inset-left, 0px);
+  }
+  *{box-sizing:border-box}
+  /* Chặn nháy đúp phóng to. 'manipulation' bỏ đúng cử chỉ nháy-đúp-để-zoom,
+     VẪN giữ chụm-hai-ngón phóng to — nên người cần phóng to để đọc thì vẫn
+     làm được, chỉ hết cái bực bấm nhanh hai lần là màn hình nhảy cỡ.
+     Không dùng user-scalable=no ở thẻ viewport: iOS Safari bỏ qua nó, và nó
+     chặn luôn cả chụm-hai-ngón, tức là chặn cả người cần nó thật. */
+  html{touch-action:manipulation}
+  /* [hidden] của trình duyệt là quy tắc UA, nên BẤT KỲ display nào ta tự đặt
+     cũng đè lên nó — .mixhead{display:flex} từng làm thanh "‹ Quay lại" hiện
+     ra dù đã set hidden. Ép một lần ở đây cho mọi phần tử. */
+  [hidden]{display:none !important}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    padding-bottom:calc(220px + var(--sab));
+    padding-left:var(--sal);padding-right:var(--sar);
+    -webkit-tap-highlight-color:transparent}
+  header{position:sticky;top:0;z-index:5;background:rgba(11,15,22,.92);
+    backdrop-filter:blur(12px);border-bottom:1px solid var(--line);
+    padding:calc(12px + var(--sat)) 14px 12px}
+  .brand{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+  .brand b{font-size:16px;letter-spacing:.3px}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--danger);flex:none}
+  .dot.on{background:var(--accent);box-shadow:0 0 10px var(--accent)}
+  .status{font-size:12px;color:var(--muted);margin-left:auto;text-align:right;line-height:1.35}
+  .searchbar{display:flex;gap:8px}
+  .qwrap{position:relative;flex:1;min-width:0;display:flex}
+  input[type=search]{flex:1;min-width:0;background:var(--panel);border:1px solid var(--line);
+    color:var(--fg);border-radius:12px;padding:12px 14px;font-size:16px;outline:none}
+  input[type=search]:focus{border-color:var(--accent)}
+  /* Nút ✕ tự làm chứ không dùng nút xoá sẵn của trình duyệt: Chrome trên
+     Android không hiện nó, và trên nền tối thì gần như không nhìn thấy. */
+  input[type=search]::-webkit-search-cancel-button{-webkit-appearance:none;appearance:none}
+  .qclear{position:absolute;right:6px;top:50%;transform:translateY(-50%);
+    width:34px;height:34px;border-radius:50%;border:0;background:var(--panel2);
+    color:var(--muted);font-size:15px;display:grid;place-items:center;cursor:pointer;padding:0}
+  .qclear[hidden]{display:none}
+  .qclear{transition:transform var(--t-fast) var(--ease),background var(--t-fast) linear}
+  .qclear:active{transform:translateY(-50%) scale(.86)}
+  /* Chừa chỗ cho nút ✕ để chữ không chui xuống dưới nó. */
+  .qwrap input[type=search]{padding-right:46px}
+  .btn{background:var(--panel2);border:1px solid var(--line);color:var(--fg);
+    border-radius:12px;padding:12px 16px;font-size:15px;cursor:pointer}
+  .btn.primary{background:var(--accent);color:var(--accent-ink);border-color:transparent;font-weight:700}
+  .btn{transition:transform var(--t-fast) var(--ease),background var(--t-med) linear,
+    border-color var(--t-med) linear,filter var(--t-fast) linear}
+  .btn:active{transform:scale(.96)}
+  @media (hover:hover){ .btn:hover{filter:brightness(1.12)} }
+  .warn{margin:10px 14px 0;padding:11px 13px;border-radius:12px;font-size:13.5px;line-height:1.5;
+    background:#3b1d1d;border:1px solid #6b2b2b;color:#ffc9c9}
+  /* Gim thanh tab ngay dưới header khi cuộn. top phải bằng ĐÚNG chiều cao
+     header, mà header cao thấp khác nhau (vùng an toàn tai thỏ, cảnh báo dài
+     ngắn), nên đo bằng JS rồi đổ vào --headerH. */
+  .tabs{position:sticky;top:var(--headerH,0px);z-index:4;
+    display:flex;gap:6px;padding:12px 14px;background:var(--bg);
+    border-bottom:1px solid var(--line)}
+  .tab{flex:1;text-align:center;padding:9px;border-radius:10px;background:var(--panel);
+    border:1px solid var(--line);color:var(--muted);font-size:14px;cursor:pointer}
+  .tab{transition:background var(--t-med) var(--ease),color var(--t-med) var(--ease),
+    border-color var(--t-med) var(--ease),transform var(--t-fast) var(--ease)}
+  .tab:active{transform:scale(.97)}
+  .tab.active{background:var(--panel2);color:var(--fg);border-color:#31405a}
+  section{padding:12px 14px}
+  .empty{color:var(--muted);text-align:center;padding:36px 12px;font-size:14px;line-height:1.6}
+  /* Hàng chờ được vẽ lại mỗi lần server báo trạng thái (khoảng 1 giây/lần).
+     contain giữ việc tính lại nằm gọn trong từng dòng, không lan ra cả danh
+     sách 40-50 dòng. */
+  .row{display:flex;gap:11px;align-items:center;padding:9px;border-radius:12px;
+    background:var(--panel);contain:layout paint}
+  .row + .row{margin-top:7px}
+  .row.now{background:#16281d;border:1px solid #2b4a35}
+  /* Cả dòng bấm được để phát ngay — không phải nhắm vào cái nút bé xíu. */
+  .row.tap{cursor:pointer}
+  .row.tap{transition:background var(--t-med) var(--ease),transform var(--t-fast) var(--ease)}
+  .row.tap:active{background:var(--panel2);transform:scale(.995)}
+  @media (hover:hover){ .row.tap:hover{background:var(--panel2)} }
+  .row img{width:58px;height:44px;object-fit:cover;border-radius:8px;flex:none;background:#222}
+  .meta{min-width:0;flex:1}
+  .meta .t{font-size:14.5px;line-height:1.35;overflow:hidden;display:-webkit-box;
+    -webkit-line-clamp:2;-webkit-box-orient:vertical}
+  .meta .s{font-size:12px;color:var(--muted);margin-top:3px;overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap}
+  .acts{display:flex;gap:5px;flex:none}
+  .icon{width:36px;height:36px;border-radius:10px;background:var(--panel2);border:1px solid var(--line);
+    color:var(--fg);font-size:15px;display:grid;place-items:center;cursor:pointer;padding:0}
+  .icon.danger{color:var(--danger)}
+  /* Nút icon đứng một mình (không có chữ đi kèm) phải to hơn mức 36px, nếu
+     không ngón tay bấm trượt suốt. */
+  .icon.big{width:46px;height:46px;font-size:21px;border-radius:13px}
+  .icon{transition:transform var(--t-fast) var(--ease),background var(--t-med) linear,
+    border-color var(--t-med) linear}
+  .icon:active{transform:scale(.9)}
+  @media (hover:hover){ .icon:hover{background:#22304a} }
+  h3{font-size:13px;text-transform:uppercase;letter-spacing:.9px;color:var(--muted);
+    margin:4px 0 10px;display:flex;align-items:center;gap:8px}
+  h3 .sp{margin-left:auto;text-transform:none;letter-spacing:0}
+
+  /* ---- Lưới thumbnail kiểu menu chọn bài phòng hát ---------------------- */
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;
+    overflow:hidden;cursor:pointer}
+  /* CHỈ chuyển động transform và opacity. Hai thứ này máy chạy thẳng trên GPU,
+     không phải tính lại bố cục hay vẽ lại pixel — nên mượt cả trên điện thoại
+     cũ. Bóng đổ (box-shadow) thì ngược lại: mỗi khung hình phải vẽ lại vùng
+     mờ, rất nặng, nên bóng nằm ở lớp phủ riêng và chỉ mờ/tỏ bằng opacity.
+     contain giới hạn ảnh hưởng của thẻ trong chính nó: đổi một thẻ thì trình
+     duyệt không phải tính lại cả lưới 20 thẻ. */
+  .card{transition:transform var(--t-med) var(--ease),border-color var(--t-med) linear;
+    contain:layout paint;position:relative}
+  .card::after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+    box-shadow:0 8px 22px rgba(0,0,0,.4);opacity:0;
+    transition:opacity var(--t-med) var(--ease)}
+  .card:active{transform:scale(.965)}
+  @media (hover:hover){
+    .card:hover{border-color:#31405a;transform:translateY(-2px)}
+    .card:hover::after{opacity:1}
+  }
+  /* Thẻ mới hiện ra thì trồi lên nhẹ thay vì bụp một cái. Chỉ dùng cho lưới
+     thumbnail: hàng chờ vẽ lại mỗi lần server báo trạng thái (mỗi giây), cho
+     nó chạy hiệu ứng thì sẽ nhấp nháy liên tục. */
+  @keyframes cardIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  .grid .card{animation:cardIn var(--t-slow) var(--ease-soft) both}
+  /* Lệch nhau vài chục mili giây thì lưới "chảy" vào chỗ thay vì bung ra
+     cùng lúc. Chỉ đặt cho 8 thẻ đầu — số còn lại thường nằm dưới màn hình,
+     thêm quy tắc chỉ tốn công tính chứ mắt không thấy. */
+  .grid .card:nth-child(2){animation-delay:.03s}
+  .grid .card:nth-child(3){animation-delay:.06s}
+  .grid .card:nth-child(4){animation-delay:.09s}
+  .grid .card:nth-child(5){animation-delay:.12s}
+  .grid .card:nth-child(6){animation-delay:.15s}
+  .grid .card:nth-child(7){animation-delay:.18s}
+  .grid .card:nth-child(n+8){animation-delay:.21s}
+  .card .thumb{position:relative;aspect-ratio:16/9;background:#222}
+  .card .thumb img{width:100%;height:100%;object-fit:cover;display:block}
+  .card .dur{position:absolute;right:6px;bottom:6px;background:rgba(0,0,0,.78);
+    color:#fff;font-size:11px;padding:2px 6px;border-radius:6px;
+    font-variant-numeric:tabular-nums}
+  /* Nút ＋ đè lên ảnh: to đủ để bấm bằng ngón cái mà không chiếm chỗ chữ. */
+  .card .addbtn{position:absolute;left:6px;top:6px;width:34px;height:34px;
+    border-radius:10px;border:0;background:rgba(11,15,22,.74);color:#fff;
+    font-size:17px;display:grid;place-items:center;cursor:pointer;padding:0}
+  .card .addbtn{transition:transform var(--t-fast) var(--ease),background var(--t-fast) linear}
+  .card .addbtn:active{transform:scale(.87)}
+  /* Nút Mix: chữ chứ không phải icon, vì "phát cả mạch bài giống thế này"
+     không có biểu tượng nào ai cũng đoán ra. */
+  .card .mixbtn{position:absolute;right:6px;top:6px;height:28px;padding:0 10px;
+    border-radius:8px;border:0;background:rgba(11,15,22,.74);color:#fff;
+    font-size:12px;font-weight:600;display:grid;place-items:center;cursor:pointer}
+  .card .mixbtn{transition:transform var(--t-fast) var(--ease),background var(--t-fast) linear}
+  .card .mixbtn:active{transform:scale(.87)}
+  /* Nút ✕ nằm góc dưới-trái: xa hai nút kia để không bấm nhầm sang "xoá" khi
+     đang định thêm bài. */
+  .card .hidebtn{position:absolute;left:6px;bottom:6px;width:32px;height:32px;
+    border-radius:9px;border:0;background:rgba(11,15,22,.74);color:#ffb4b4;
+    font-size:14px;display:grid;place-items:center;cursor:pointer;padding:0}
+  .card .hidebtn{transition:transform var(--t-fast) var(--ease),background var(--t-fast) linear}
+  .card .hidebtn:active{transform:scale(.87)}
+  /* min-height giữ đáy các thẻ thẳng hàng dù tên bài dài ngắn khác nhau. */
+  .card .t{font-size:13.5px;line-height:1.35;margin:8px 9px 0;overflow:hidden;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;min-height:2.7em}
+  .card .s{font-size:11.5px;color:var(--muted);margin:3px 9px 10px;overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap}
+  .card .cnt{color:var(--accent)}
+
+  /* ---- Khối ghép mix --------------------------------------------------- */
+  .mixbar{display:flex;gap:8px;margin-bottom:12px}
+  .mixbar input{flex:1;min-width:0;background:var(--panel);border:1px solid var(--line);
+    color:var(--fg);border-radius:12px;padding:11px 13px;font-size:16px;outline:none}
+  .mixbar input:focus{border-color:var(--accent)}
+  .mixhead{display:flex;gap:10px;align-items:center;background:var(--panel);
+    border:1px solid var(--line);border-radius:14px;padding:12px 13px;margin-bottom:12px}
+  .mixhead .mt{min-width:0;flex:1}
+  .mixhead .mt b{font-size:14.5px;display:block;overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap}
+  .mixhead .mt span{font-size:12px;color:var(--muted)}
+  .mixsub{font-size:12.5px;color:var(--muted);margin:-2px 0 12px}
+  .pager{display:flex;align-items:center;justify-content:center;gap:14px;margin-top:12px}
+  .pager span{font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}
+  .pager button:disabled{opacity:.35;cursor:default}
+  .pager[hidden]{display:none}
+  /* Thẻ mix: nhìn phải khác thẻ bài lẻ, nếu không người ta tưởng bấm vào là
+     phát một bài. Nhãn "▶ 15 bài" nằm giữa ảnh nói rõ đây là cả một mạch. */
+  .mixcard .thumb::after{content:'';position:absolute;inset:0;
+    background:linear-gradient(180deg,rgba(0,0,0,.15),rgba(0,0,0,.6))}
+  .mixbadge{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:1;
+    background:rgba(11,15,22,.82);color:#fff;font-size:13px;font-weight:700;
+    padding:7px 14px;border-radius:99px;white-space:nowrap}
+
+  /* Now playing dock */
+  /* Lướt xuống thì thanh điều khiển trượt đi cho rộng chỗ; lướt lên, dừng
+     lướt, hay chạm vào bất cứ nút nào là nó quay lại. Chỉ làm ở khổ điện
+     thoại — màn rộng thì thanh này không chiếm mấy chỗ. */
+  /* Không đặt will-change cố định ở đây: nó bắt trình duyệt giữ sẵn một lớp
+     ảnh riêng cho thanh này suốt đời trang, mà thanh lại có backdrop-filter
+     (làm mờ nền) nên lớp đó rất tốn bộ nhớ trên máy yếu. Chỉ bật đúng lúc
+     đang trượt, xong thì gỡ (xem .dock.moving). */
+  .dock{transition:transform var(--t-slow) var(--ease),opacity var(--t-med) linear}
+  .dock.moving{will-change:transform}
+  /* +14px để trượt hết cả phần bóng đổ, nếu không còn một vệt mờ dính ở đáy. */
+  .dock.away{transform:translateY(calc(100% + 14px));opacity:.85}
+  @media (min-width:900px){ .dock.away{transform:none} }
+  .dock{position:fixed;left:0;right:0;bottom:0;z-index:6;background:rgba(16,21,30,.97);
+    backdrop-filter:blur(14px);border-top:1px solid var(--line);
+    padding:11px calc(14px + var(--sar)) calc(12px + var(--sab)) calc(14px + var(--sal))}
+  .np{display:flex;gap:11px;align-items:center;margin-bottom:9px}
+  .np img{width:52px;height:52px;border-radius:10px;object-fit:cover;flex:none;background:#222}
+  .np .t{font-size:14.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .np .s{font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:22px;background:transparent}
+  input[type=range]::-webkit-slider-runnable-track{height:5px;border-radius:99px;background:#232d3d}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;
+    border-radius:50%;background:var(--accent);margin-top:-5.5px}
+  input[type=range]::-moz-range-track{height:5px;border-radius:99px;background:#232d3d}
+  input[type=range]::-moz-range-thumb{width:16px;height:16px;border:0;border-radius:50%;background:var(--accent)}
+  .times{display:flex;justify-content:space-between;font-size:11.5px;color:var(--muted);
+    font-variant-numeric:tabular-nums;margin-top:-4px}
+  /* Bảy nút trên một hàng: máy hẹp, hoặc máy có tai thỏ ngang ăn mất lề hai
+     bên, thì 44px × 7 không đủ chỗ và nút cuối (âm lượng) văng ra ngoài màn
+     hình. Cho phép nút co lại thay vì tràn. */
+  .ctrls{display:flex;align-items:center;gap:6px;margin-top:8px}
+  .ctrl{width:44px;height:44px;border-radius:50%;background:var(--panel2);border:1px solid var(--line);
+    color:var(--fg);font-size:17px;display:grid;place-items:center;cursor:pointer;
+    flex:0 1 44px;min-width:32px}
+  .ctrl.play{width:54px;height:54px;background:var(--accent);color:var(--accent-ink);
+    border-color:transparent;font-size:21px;flex:0 1 54px;min-width:44px}
+  .ctrl.on{color:var(--accent);border-color:#2f5a3f}
+  .ctrl{transition:transform var(--t-fast) var(--ease),background var(--t-med) linear,
+    color var(--t-med) linear,border-color var(--t-med) linear}
+  .ctrl:active{transform:scale(.9)}
+  @media (hover:hover){ .ctrl:hover{background:#22304a} }
+  @media (hover:hover){ .ctrl.play:hover{background:var(--accent);filter:brightness(1.1)} }
+  /* Âm lượng: trên điện thoại thanh trượt nhỏ xíu rất khó chỉnh,
+     nên bấm icon loa mới mở popup có thanh to + nút −/+ bấm từng nấc. */
+  .volwrap{margin-left:auto}
+  /* position:fixed + bottom tính theo chiều cao dock lúc mở (xem openVol):
+     dock cao thấp khác nhau tuỳ tên bài dài ngắn, neo cứng bằng px sẽ đè lên
+     tên bài đang phát. */
+  .volpop{position:fixed;right:calc(14px + var(--sar));bottom:0;z-index:8;
+    display:flex;align-items:center;gap:10px;
+    width:min(78vw,320px);padding:12px 14px;
+    background:#1a2231;border:1px solid var(--line);border-radius:16px;
+    box-shadow:0 12px 32px rgba(0,0,0,.5)}
+  /* Không dùng thuộc tính hidden nữa: hidden nghĩa là display:none, mà
+     display thì không chuyển động được — popup sẽ bật ra tức thì. Dùng
+     visibility + opacity để nó mờ dần và trượt nhẹ. visibility đổi NGAY khi
+     mở, nhưng chờ hết hiệu ứng mới tắt (delay ở dòng transition), nhờ vậy
+     lúc đóng vẫn thấy nó mờ dần chứ không biến mất giữa chừng. */
+  .volpop{opacity:0;visibility:hidden;transform:translateY(10px) scale(.97);
+    transform-origin:100% 100%;
+    transition:opacity var(--t-med) var(--ease),transform var(--t-med) var(--ease),
+      visibility 0s linear var(--t-med)}
+  .volpop.open{opacity:1;visibility:visible;transform:none;transition-delay:0s}
+  .volpop input[type=range]{height:40px}
+  .volpop input[type=range]::-webkit-slider-runnable-track{height:8px}
+  .volpop input[type=range]::-webkit-slider-thumb{width:28px;height:28px;margin-top:-10px}
+  .volpop input[type=range]::-moz-range-track{height:8px}
+  .volpop input[type=range]::-moz-range-thumb{width:28px;height:28px}
+  .volstep{flex:none;width:40px;height:40px;border-radius:12px;background:var(--panel2);
+    border:1px solid var(--line);color:var(--fg);font-size:20px;line-height:1;
+    display:grid;place-items:center;cursor:pointer}
+  .volstep{transition:transform var(--t-fast) var(--ease),background var(--t-fast) linear}
+  .volstep:active{transform:scale(.88)}
+  .volval{flex:none;min-width:38px;text-align:right;font-size:14px;
+    font-variant-numeric:tabular-nums;color:var(--muted)}
+  /* Cho biết thanh này đang chỉnh CÁI GÌ — loa thật của máy chủ hay chỉ mức
+     trong trình phát. Hai thứ đó khác nhau hẳn khi loa đang vặn nhỏ. */
+  .volnote{position:absolute;left:14px;right:14px;bottom:6px;
+    font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;
+    text-overflow:ellipsis}
+  .volpop{padding-bottom:24px}
+
+  /* ---- Màn hình rộng: hàng chờ ra hẳn cột phải, luôn nhìn thấy ----------
+     Đúng kiểu phòng hát: bên trái chọn bài, bên phải là danh sách đang chờ,
+     không phải bấm qua bấm lại giữa hai tab. Dưới 900px thì hàng chờ quay về
+     làm một tab như cũ. */
+  @media (min-width:900px){
+    /* 360px hẹp quá: tên bài bị cắt cụt ngay từ chữ thứ tư. */
+    .shell{display:grid;grid-template-columns:minmax(0,1fr) 420px;align-items:start}
+    #side{display:block !important;position:sticky;top:var(--headerH,0px);
+      height:calc(100vh - var(--headerH,0px));
+      overflow-y:auto;border-left:1px solid var(--line);
+      padding-bottom:calc(230px + var(--sab))}
+    .tab[data-tab="queue"]{display:none}
+    .grid{grid-template-columns:repeat(auto-fill,minmax(180px,1fr))}
+    .dock{padding-left:20px;padding-right:20px}
+  }
+  /* Màn PC rộng thì cho hàng chờ thêm chỗ nữa — tên bài tiếng Việt hay dài. */
+  @media (min-width:1280px){
+    .shell{grid-template-columns:minmax(0,1fr) 500px}
+  }
+  .toast{position:fixed;left:50%;bottom:240px;z-index:20;
+    background:#222c3c;border:1px solid var(--line);color:var(--fg);padding:11px 16px;
+    border-radius:12px;font-size:13.5px;max-width:88vw;
+    opacity:0;transform:translateX(-50%) translateY(10px);
+    transition:opacity var(--t-med) var(--ease),transform var(--t-med) var(--ease);
+    pointer-events:none}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  .chips{display:flex;gap:7px;overflow-x:auto;padding-bottom:10px;margin-bottom:4px;
+    scrollbar-width:none}
+  .chips::-webkit-scrollbar{display:none}
+  .chip{flex:none;padding:7px 14px;border-radius:99px;background:var(--panel);
+    border:1px solid var(--line);color:var(--muted);font-size:13px;cursor:pointer;white-space:nowrap}
+  .chip{transition:background var(--t-med) var(--ease),color var(--t-med) var(--ease),
+    border-color var(--t-med) var(--ease),transform var(--t-fast) var(--ease)}
+  .chip:active{transform:scale(.94)}
+  .chip.on{background:var(--fg);color:var(--bg);border-color:transparent;font-weight:600}
+  .acct{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;
+    text-align:center}
+  .acct p{color:var(--muted);font-size:13.5px;line-height:1.6;margin:0 0 14px}
+  .code{font-family:ui-monospace,Menlo,monospace;font-size:30px;letter-spacing:5px;
+    font-weight:700;color:var(--accent);background:#0d1520;border:1px dashed #2f5a3f;
+    border-radius:12px;padding:16px 10px;margin:14px 0;user-select:all}
+  .plph{width:58px;height:44px;border-radius:8px;flex:none;background:var(--panel2);
+    display:grid;place-items:center;color:var(--muted);font-size:17px}
+  .spin{display:inline-block;width:14px;height:14px;border:2px solid #33405a;
+    border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+
+  /* Đổi tab: nội dung mới hiện lên có đà một chút, đỡ cảm giác "nhảy trang".
+     Đặt ở phần tử bao ngoài chứ không phải từng dòng, nên chỉ một lớp vẽ. */
+  @keyframes paneIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  .paneIn{animation:paneIn var(--t-med) var(--ease-soft) both}
+
+  /* Lưới dài: bảo trình duyệt bỏ qua việc dựng những thẻ đang nằm ngoài màn
+     hình. contain-intrinsic-size cho nó biết chỗ trống cần chừa, nếu không
+     thanh cuộn sẽ nhảy loạn khi cuộn tới. */
+  @supports (content-visibility:auto){
+    .grid .card{content-visibility:auto;contain-intrinsic-size:auto 230px}
+  }
+
+  /* Người đã bật "giảm chuyển động" trong cài đặt máy thì bỏ hết hiệu ứng —
+     với một số người chuyển động trên màn hình gây chóng mặt thật sự.
+     Vẫn giữ 1ms chứ không phải 0s để các sự kiện transitionend còn nổ. */
+  @media (prefers-reduced-motion:reduce){
+    *,*::before,*::after{
+      animation-duration:.01ms !important;animation-iteration-count:1 !important;
+      transition-duration:.01ms !important;scroll-behavior:auto !important}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <span class="dot" id="dot"></span>
+    <b>Jukebox</b>
+    <div class="status" id="status">Đang kết nối…</div>
+  </div>
+  <form class="searchbar" id="searchForm">
+    <div class="qwrap">
+      <input type="search" id="q" placeholder="Tìm bài hát, hoặc dán link YouTube…" autocomplete="off">
+      <button type="button" class="qclear" id="qClear" title="Xoá ô tìm kiếm"
+              aria-label="Xoá ô tìm kiếm" hidden>✕</button>
+    </div>
+    <button class="btn primary" type="submit" id="searchBtn">Tìm</button>
+  </form>
+</header>
+
+<div class="warn" id="staleBuild" style="display:none"></div>
+
+<div class="warn" id="ytWarn" style="display:none"></div>
+
+<div class="warn" id="noPlayer" style="display:none">
+  Chưa có máy phát nào online. Trên máy nối loa, mở
+  <b><span id="playerUrl"></span></b> rồi bấm “Bật loa”. Nhạc chỉ phát khi trang đó đang mở.
+</div>
+
+<div class="shell">
+<main>
+<div class="tabs">
+  <div class="tab active" data-tab="queue">Hàng chờ</div>
+  <div class="tab" data-tab="results">Tìm kiếm</div>
+  <div class="tab" data-tab="home" id="tabHomeLabel">Home</div>
+  <div class="tab" data-tab="me">Của tôi</div>
+</div>
+
+<section id="paneResults" style="display:none">
+  <div class="mixhead" id="resultsBack" hidden>
+    <button class="btn" id="backToMe">‹ Quay lại</button>
+    <div class="mt"><b id="resultsCtx"></b></div>
+    <button class="btn primary" id="addAllResults">＋ Thêm tất cả</button>
+  </div>
+  <h3 id="resultsHead">Kết quả</h3>
+  <div id="results"><div class="empty">Nhập từ khoá phía trên để tìm nhạc trên YouTube.</div></div>
+</section>
+
+<section id="paneHome" style="display:none">
+  <div id="topBox" style="display:none">
+    <h3>Hay nghe ở đây <span class="sp" id="topNote"></span></h3>
+    <div id="top"></div>
+    <div class="pager" id="topPager" hidden>
+      <button class="icon" id="topPrev" aria-label="Trang trước">‹</button>
+      <span id="topPageInfo"></span>
+      <button class="icon" id="topNext" aria-label="Trang sau">›</button>
+    </div>
+  </div>
+
+  <div id="mixBox">
+    <h3 style="margin-top:18px">Playlist gợi ý
+      <span class="sp"><button class="icon big" id="mixReload"
+        title="Đổi sang mẻ playlist khác" aria-label="Đổi mẻ playlist">⟳</button></span></h3>
+    <div class="chips" id="mixSrcChips">
+      <div class="chip on" data-mixsrc="genre">Ngẫu nhiên</div>
+      <div class="chip" data-mixsrc="history">Từ bài hay nghe</div>
+      <div class="chip" data-mixsrc="query">Từ khoá tự gõ</div>
+    </div>
+    <div class="mixbar">
+      <div class="qwrap" id="mixQWrap" style="display:none">
+        <input type="search" id="mixQ" placeholder="Tên ca sĩ hoặc bài hát…"
+               autocomplete="off">
+        <button type="button" class="qclear" id="mixQClear" title="Xoá ô"
+                aria-label="Xoá ô từ khoá" hidden>✕</button>
+      </div>
+      <button class="btn primary" id="mixMake" style="display:none">Tạo</button>
+    </div>
+    <div id="mixResult"></div>
+  </div>
+
+  <h3 id="homeHead" style="margin-top:18px">Chọn thể loại
+    <span class="sp"><button class="icon big" id="homeRefresh"
+      title="Đổi sang mẻ bài khác" aria-label="Đổi mẻ bài khác">⟳</button></span></h3>
+  <div class="chips" id="homeChips"></div>
+  <div id="stationBar"></div>
+  <div id="home"></div>
+</section>
+
+<section id="paneMe" style="display:none">
+  <div id="gapiBox"></div>
+  <h3 style="margin-top:18px">Playlist của tôi</h3>
+  <div id="myPlaylists"></div>
+  <h3 style="margin-top:18px" id="lastHead">Nghe gần đây</h3>
+  <div id="myHistory"></div>
+  <div class="pager" id="histPager" hidden>
+    <button class="icon" id="histPrev" aria-label="Trang trước">‹</button>
+    <span id="histPageInfo"></span>
+    <button class="icon" id="histNext" aria-label="Trang sau">›</button>
+  </div>
+</section>
+</main>
+
+<aside id="side">
+<section id="paneQueue">
+  <h3>Hẹn giờ dừng <span class="sp" id="sleepLeft"></span></h3>
+  <div class="chips" id="sleepChips"></div>
+
+  <h3 style="margin-top:16px">Hàng chờ <span class="sp" id="queueCount"></span>
+    <button class="icon" id="clearBtn" title="Xoá hàng chờ">🗑</button></h3>
+  <div id="queue"></div>
+</section>
+</aside>
+</div>
+
+<div class="dock">
+  <div class="np">
+    <img id="npArt" alt="" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==">
+    <div style="min-width:0;flex:1">
+      <div class="t" id="npTitle">Chưa phát bài nào</div>
+      <div class="s" id="npAuthor">Hàng chờ trống</div>
+    </div>
+  </div>
+  <input type="range" id="seek" min="0" max="1000" value="0">
+  <div class="times"><span id="tcur">0:00</span><span id="tdur">0:00</span></div>
+  <div class="ctrls">
+    <button class="ctrl" id="bShuffle" title="Phát ngẫu nhiên">🔀</button>
+    <button class="ctrl" id="bPrev" title="Bài trước">⏮</button>
+    <button class="ctrl play" id="bPlay" title="Phát / tạm dừng">▶</button>
+    <button class="ctrl" id="bNext" title="Bài kế">⏭</button>
+    <button class="ctrl" id="bRepeat" title="Lặp lại">🔁</button>
+    <button class="ctrl" id="bRadio"
+            title="Tự phát tiếp bài cùng thể loại khi hết hàng chờ">📻</button>
+    <div class="volwrap">
+      <button class="ctrl" id="bVol" title="Âm lượng">🔊</button>
+      <div class="volpop" id="volPop">
+        <button class="volstep" id="volDown" title="Giảm">−</button>
+        <input type="range" id="vol" min="0" max="100" value="60">
+        <button class="volstep" id="volUp" title="Tăng">＋</button>
+        <span class="volval" id="volVal">60</span>
+        <div class="volnote" id="volNote"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// Phải khớp với hằng BUILD trong server.js.
+const BUILD = '2026-08-29.2';
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"']/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt = (s) => {
+  s = Math.max(0, Math.floor(s || 0));
+  const m = Math.floor(s / 60), h = Math.floor(m / 60);
+  return h ? `${h}:${String(m%60).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`
+           : `${m}:${String(s%60).padStart(2,'0')}`;
+};
+
+let ws = null, st = null, seeking = false, volTouch = false;
+let homeLoaded = false, meLoaded = false;
+let gapiState = null, gapiPoll = null;
+// Mỗi danh sách bài giữ mảng riêng; nút bấm tham chiếu theo (tên list, chỉ số).
+const lists = { results: [], home: [], history: [] };
+let myName = localStorage.getItem('jb_name') || '';
+if (!myName) {
+  myName = 'Máy ' + Math.random().toString(36).slice(2, 6).toUpperCase();
+  localStorage.setItem('jb_name', myName);
+}
+$('playerUrl').textContent = location.origin + '/player';
+
+function send(o) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }
+const cmd = (c, extra = {}) => {
+  // Làm gì với nhạc cũng kéo thanh điều khiển trở lại — vừa chọn bài xong mà
+  // không thấy nút tạm dừng ở đâu thì rất bực.
+  keepDock();
+  return send(Object.assign({ type: 'cmd', cmd: c }, extra));
+};
+
+let toastTimer;
+function toast(text) {
+  $('toast').textContent = text;
+  $('toast').classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => $('toast').classList.remove('show'), 2600);
+}
+
+// ---- WebSocket --------------------------------------------------------
+function connect() {
+  ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
+  ws.onopen = () => { $('dot').classList.add('on'); send({ type: 'hello', role: 'remote', name: myName }); };
+  ws.onclose = () => {
+    $('dot').classList.remove('on');
+    $('status').textContent = 'Mất kết nối…';
+    setTimeout(connect, 1800);
+  };
+  ws.onmessage = (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.type === 'state') { st = m.state; render(); }
+    else if (m.type === 'tick') {
+      if (!st) return;
+      st.position = m.position; st.duration = m.duration || st.duration;
+      renderProgress();
+    }
+    else if (m.type === 'toast') toast(m.text);
+  };
+}
+connect();
+
+// ---- Render -----------------------------------------------------------
+function render() {
+  if (!st) return;
+  $('status').innerHTML =
+    (st.players ? '🔊 ' + st.players + ' máy phát' : '⚠️ chưa có máy phát') +
+    ' · ' + st.remotes + ' điều khiển';
+  $('noPlayer').style.display = st.players ? 'none' : '';
+
+  const cur = st.current;
+  $('npTitle').textContent = cur ? cur.title : 'Chưa phát bài nào';
+  // Đang bật nghe liên tục thì cho biết đang theo thể loại nào — nếu không,
+  // nghe cả buổi mà không rõ nhạc từ đâu ra.
+  const stationNote = st.station ? '  ·  📻 ' + (st.stationLabel || '') : '';
+  $('npAuthor').textContent = cur
+    ? (cur.author || '') + (cur.addedBy ? '  ·  ' + cur.addedBy : '') + stationNote
+    : (st.queue.length ? 'Bấm ▶ để bắt đầu' : 'Hàng chờ trống' + stationNote);
+  if (cur) $('npArt').src = cur.thumb;
+  $('bPlay').textContent = st.playing ? '⏸' : '▶';
+  $('bShuffle').classList.toggle('on', st.shuffle);
+  $('bRepeat').classList.toggle('on', st.repeat !== 'off');
+  $('bRepeat').textContent = st.repeat === 'one' ? '🔂' : '🔁';
+  $('bRadio').classList.toggle('on', st.autoRadio);
+  // Đang đi tìm bài liên quan thì cho thấy, khỏi tưởng bấm hụt.
+  $('bRadio').textContent = st.radioBusy ? '⏳' : '📻';
+  // Nút bật/tắt phải lật ngay khi server đổi trạng thái.
+  if (genres.length && pickedGenre) renderStationBar();
+  if (!volTouch) { $('vol').value = st.volume; volLive(); }
+
+  renderProgress();
+  renderSleep();
+  renderQueue();
+}
+
+function renderProgress() {
+  if (!st) return;
+  const d = st.duration || (st.current && st.current.duration) || 0;
+  $('tcur').textContent = fmt(st.position);
+  $('tdur').textContent = d ? fmt(d) : '--:--';
+  if (!seeking) $('seek').value = d ? Math.round(st.position / d * 1000) : 0;
+}
+
+// ---- Hẹn giờ dừng ------------------------------------------------------
+const SLEEP_OPTS = [
+  { m: 30, label: '30 phút' },
+  { m: 60, label: '1 tiếng' },
+  { m: 120, label: '2 tiếng' },
+];
+
+function renderSleep() {
+  const on = st?.sleepAt || 0;
+  $('sleepChips').innerHTML =
+    SLEEP_OPTS.map(o => `<span class="chip" data-sleep="${o.m}">${o.label}</span>`).join('') +
+    (on ? '<span class="chip on" data-sleep="0">✕ Huỷ hẹn giờ</span>' : '');
+
+  if (!on) return ($('sleepLeft').textContent = '');
+  const left = Math.max(0, on - Date.now());
+  const mm = Math.floor(left / 60000);
+  const ss = Math.floor((left % 60000) / 1000);
+  $('sleepLeft').textContent =
+    `còn ${mm}:${String(ss).padStart(2, '0')}`;
+}
+
+$('sleepChips').onclick = (e) => {
+  const c = e.target.closest('[data-sleep]');
+  if (c) cmd('sleep', { minutes: +c.dataset.sleep });
+};
+
+function renderQueue() {
+  $('queueCount').textContent = st.queue.length ? st.queue.length + ' bài' : '';
+  if (!st.queue.length) {
+    $('queue').innerHTML = '<div class="empty">Hàng chờ đang trống.<br>Tìm một bài ở ô phía trên rồi bấm +.</div>';
+    return;
+  }
+  $('queue').innerHTML = st.queue.map((t, i) => `
+    <div class="row tap ${i === st.index ? 'now' : ''}" data-jumprow="${esc(t.uid)}"
+         title="Bấm để phát bài này">
+      <img src="${esc(t.thumb)}" alt="" loading="lazy" decoding="async">
+      <div class="meta">
+        <div class="t">${i === st.index ? '▶ ' : ''}${esc(t.title)}</div>
+        <div class="s">${esc(t.author)}${t.duration ? ' · ' + fmt(t.duration) : ''} · ${esc(t.addedBy || '')}</div>
+      </div>
+      <div class="acts">
+        <button class="icon" data-mix="${esc(t.uid)}" title="Thêm bài cùng thể loại">📻</button>
+        <button class="icon" data-up="${esc(t.uid)}" title="Lên trên">↑</button>
+        <button class="icon danger" data-del="${esc(t.uid)}" title="Xoá">✕</button>
+      </div>
+    </div>`).join('');
+}
+
+/**
+ * HTML cho một danh sách bài hát, dùng chung cho tìm kiếm / gợi ý / lịch sử.
+ *
+ * Dạng lưới thumbnail lớn giống menu chọn bài phòng hát: mắt nhận ra bài qua
+ * ảnh nhanh hơn nhiều so với đọc một cột chữ.
+ */
+function trackListHTML(key, items) {
+  return '<div class="grid">' + items.map((t, i) => `
+    <div class="card tap" data-list="${key}" data-play="${i}" title="Bấm để phát ngay">
+      <div class="thumb">
+        <img src="${esc(t.thumb)}" alt="" loading="lazy" decoding="async">
+        <button class="addbtn" data-list="${key}" data-add="${i}"
+                title="Thêm vào cuối hàng chờ">＋</button>
+        <button class="mixbtn" data-list="${key}" data-mixnew="${i}"
+                title="Phát bài này rồi tự nối các bài tương tự">▶ Mix</button>
+        ${key === 'home' ? `<button class="hidebtn" data-list="${key}" data-hide="${i}"
+                title="Không thích bài này, đừng gợi ý nữa">✕</button>` : ''}
+        ${t.duration ? `<span class="dur">${fmt(t.duration)}</span>` : ''}
+      </div>
+      <div class="t">${esc(t.title)}</div>
+      <div class="s">${t.count ? `<span class="cnt">♪ ${t.count} lần</span> · ` : ''}${esc(t.author)}</div>
+    </div>`).join('') + '</div>';
+}
+
+/**
+ * Một handler dùng chung cho mọi danh sách bài.
+ * Bấm vào đâu cũng phát ngay, TRỪ nút ＋ (thêm vào cuối hàng chờ).
+ */
+function wireTrackList(el) {
+  el.onclick = (e) => {
+    const b = e.target.closest('button');
+    if (b && b.dataset.list && b.dataset.add !== undefined) {
+      const arr = lists[b.dataset.list] || [];
+      cmd('add', { item: arr[+b.dataset.add], addedBy: myName });
+      toast('Đã thêm vào hàng chờ');
+      return;
+    }
+    if (b && b.dataset.list && b.dataset.mixnew !== undefined) {
+      const arr = lists[b.dataset.list] || [];
+      const track = arr[+b.dataset.mixnew];
+      if (track) cmd('mix', { item: track, addedBy: myName });
+      // Không toast ở đây: server trả về toast kèm số bài thật sự thêm được.
+      return;
+    }
+    if (b && b.dataset.list && b.dataset.hide !== undefined) {
+      hideSuggestion(b.dataset.list, +b.dataset.hide);
+      return;
+    }
+    if (b) return; // nút khác (ví dụ mở kênh) tự lo phần của nó
+
+    const row = e.target.closest('[data-play]');
+    if (!row || !row.dataset.list) return;
+    const arr = lists[row.dataset.list] || [];
+    const track = arr[+row.dataset.play];
+    if (!track) return;
+    cmd('add', { item: track, addedBy: myName, playNow: true });
+    toast('Đang phát: ' + track.title);
+  };
+}
+['results', 'home', 'myHistory', 'top'].forEach((id) => wireTrackList($(id)));
+
+/**
+ * Vẽ danh sách kết quả.
+ *
+ * `from` là nơi người dùng vừa rời khỏi. Mở một playlist ở tab "Của tôi" sẽ
+ * nhảy hẳn sang tab này, mà trước đây không có đường về — phải tải lại trang
+ * mới thoát ra được. Có `from` thì hiện thanh "‹ Quay lại".
+ */
+function renderResults(items, head, from) {
+  lists.results = items;
+  $('resultsHead').textContent = head;
+  $('results').innerHTML = items.length
+    ? trackListHTML('results', items)
+    : '<div class="empty">Không tìm thấy kết quả nào.</div>';
+
+  const bar = $('resultsBack');
+  bar.hidden = !from;
+  if (from) {
+    $('resultsCtx').textContent = head;
+    $('backToMe').onclick = () => showTab(from);
+    $('addAllResults').onclick = () => {
+      cmd('add', { items, addedBy: myName });
+      toast(`Đã thêm ${items.length} bài`);
+    };
+  }
+}
+
+// ---- Events -----------------------------------------------------------
+// Trên màn hình rộng, hàng chờ nằm hẳn ở cột phải chứ không còn là một tab.
+const wideQuery = matchMedia('(min-width:900px)');
+const isWide = () => wideQuery.matches;
+
+// 'queue' trỏ tới #side (cả cột phải) chứ không phải riêng #paneQueue: ở khổ
+// hẹp phải giấu luôn cái khung, nếu không nó vẫn chiếm chỗ dưới các tab khác.
+const PANES = { queue: 'side', results: 'paneResults', home: 'paneHome', me: 'paneMe' };
+let curTab = 'queue';
+
+function showTab(name) {
+  // Bấm nhầm vào tab hàng chờ trên màn rộng thì nó đã hiện sẵn bên phải rồi,
+  // chuyển sang tab có nội dung để không thành một cú bấm vô nghĩa.
+  if (isWide() && name === 'queue') name = 'home';
+  curTab = name;
+  document.querySelectorAll('.tab').forEach(t =>
+    t.classList.toggle('active', t.dataset.tab === name));
+  for (const [k, id] of Object.entries(PANES)) {
+    const el = $(id);
+    el.style.display = k === name ? '' : 'none';
+    // Gỡ rồi gắn lại class mới kích hoạt animation: trình duyệt bỏ qua nếu
+    // class đã có sẵn. offsetWidth ép tính lại bố cục ở giữa hai bước.
+    if (k === name) { el.classList.remove('paneIn'); void el.offsetWidth; el.classList.add('paneIn'); }
+  }
+  if (name === 'home' && !homeLoaded) loadHome();
+  if (name === 'me' && !meLoaded) loadMe();
+}
+document.querySelectorAll('.tab').forEach(tab => { tab.onclick = () => showTab(tab.dataset.tab); });
+
+// Xoay ngang máy tính bảng giữa chừng: bố cục đổi, tab đang chọn phải đổi theo.
+wideQuery.addEventListener('change', () => showTab(curTab));
+const showResults = () => showTab('results');
+
+// ---- Phát hiện server chạy mã cũ --------------------------------------
+// File tĩnh được đọc lại từ đĩa mỗi request, còn server.js thì nằm trong bộ
+// nhớ tiến trình. Nên sau khi cài bản mới mà quên restart, giao diện sẽ là bản
+// mới trong khi API vẫn là bản cũ -> route mới trả 404 HTML, rất khó đoán.
+async function checkBuild() {
+  try {
+    const h = await (await fetch('/healthz')).json();
+    if (h.build === BUILD) return;
+    $('staleBuild').style.display = '';
+
+    // Lệch được theo HAI chiều, cách sửa hoàn toàn khác nhau — báo sai chiều là
+    // bắt người ta restart service trong khi thủ phạm là cache trình duyệt.
+    // BUILD dạng ngày nên so sánh chuỗi cho đúng thứ tự.
+    if ((h.build || '') > BUILD) {
+      $('staleBuild').innerHTML =
+        'Trang này là bản cũ (' + esc(BUILD) + ') do trình duyệt giữ cache, ' +
+        'server đã lên ' + esc(h.build) + '.' +
+        '<br><button class="btn" id="hardReload" style="margin-top:9px">Tải lại bản mới</button>';
+      // Thêm tham số lạ vào URL để trình duyệt buộc phải hỏi lại server.
+      $('hardReload').onclick = () =>
+        location.replace(location.pathname + '?v=' + Date.now());
+    } else {
+      $('staleBuild').innerHTML =
+        'Server đang chạy mã cũ (' + esc(h.build || 'không rõ') + ') trong khi giao diện là ' +
+        esc(BUILD) + '. Chạy <b>sudo systemctl restart yt-jukebox</b> rồi tải lại trang.';
+    }
+  } catch {
+    /* mất mạng thì thôi, phần WebSocket đã có cảnh báo riêng */
+  }
+}
+checkBuild();
+
+// ---- Đường ra YouTube còn sống không ----------------------------------
+// youtubei.js đọc API nội bộ của YouTube; YouTube đổi nội bộ là nó hỏng. Không
+// có cảnh báo thì triệu chứng duy nhất là "tìm mãi không ra bài nào", rất dễ
+// tưởng mất mạng hoặc gõ sai từ khoá.
+async function checkYouTube() {
+  try {
+    const h = await (await fetch('/api/health/youtube')).json();
+    if (h.status === 'ok' || h.status === 'idle') {
+      $('ytWarn').style.display = 'none';
+      return;
+    }
+    const when = h.lastOkAt
+      ? 'Lần lấy được dữ liệu gần nhất: ' + new Date(h.lastOkAt).toLocaleString('vi-VN') + '. '
+      : 'Chưa lần nào lấy được dữ liệu kể từ khi khởi động. ';
+    const what = h.status === 'degraded'
+      ? 'Đang chạy bằng đường dự phòng — vẫn tìm được nhưng kết quả ít và dễ hỏng. '
+      : 'Không lấy được dữ liệu từ YouTube. ';
+    $('ytWarn').style.display = '';
+    $('ytWarn').innerHTML = what + when +
+      (h.hint ? '<br><b>' + esc(h.hint) + '</b>' : '') +
+      (h.lastError ? '<br><span style="opacity:.75">Lỗi: ' + esc(h.lastError) + '</span>' : '');
+  } catch {
+    /* mất mạng tới chính server thì phần WebSocket đã cảnh báo rồi */
+  }
+}
+checkYouTube();
+setInterval(checkYouTube, 60000);
+
+// ---- YouTube Data API: cấu hình + đăng nhập ---------------------------
+async function loadGapi() {
+  try {
+    gapiState = await (await fetch('/api/gapi/status')).json();
+  } catch {
+    gapiState = null;
+  }
+  renderGapi();
+  // Data API không có lịch sử xem, chỉ có "đã thích".
+  $('lastHead').textContent = gapiState?.logged_in ? 'Video đã thích' : 'Nghe gần đây';
+}
+
+function renderGapi() {
+  const g = gapiState;
+  if (!g) return ($('gapiBox').innerHTML = '');
+
+  if (g.logged_in) {
+    $('gapiBox').innerHTML = `
+      <div class="row now">
+        ${g.channel?.thumb ? `<img src="${esc(g.channel.thumb)}" alt="">` : '<div class="plph">▶</div>'}
+        <div class="meta">
+          <div class="t">✓ ${esc(g.channel?.name || 'Kênh YouTube')}</div>
+          <div class="s">Đăng nhập chính thức qua YouTube Data API</div>
+        </div>
+        <div class="acts"><button class="btn" id="gapiOut">Đăng xuất</button></div>
+      </div>`;
+    $('gapiOut').onclick = async () => {
+      await fetch('/api/gapi/logout', { method: 'POST' });
+      toast('Đã đăng xuất Data API');
+      meLoaded = homeLoaded = false;
+      await loadMe();
+    };
+    return;
+  }
+
+  if (g.pending) return renderGapiPending(g.pending);
+
+  const cfg = g.configured;
+  $('gapiBox').innerHTML = `
+    <div class="acct" style="text-align:left">
+      <h3 style="margin-top:0">Đăng nhập chính thức (khuyến nghị)</h3>
+      <p>Dùng OAuth client của riêng bạn trên Google Cloud. Lấy được playlist
+         kể cả riêng tư, video đã thích và kênh đã đăng ký — không cần cookie.</p>
+      ${cfg ? '' : `
+      <p style="color:#ffc9c9">Xem mục “Đăng nhập bằng YouTube Data API” trong
+         README để tạo Client ID (loại <b>TVs and Limited Input devices</b>).</p>`}
+      <input id="gapiId" placeholder="Client ID (…apps.googleusercontent.com)"
+        value="" style="width:100%;background:var(--bg);border:1px solid var(--line);
+        color:var(--fg);border-radius:10px;padding:10px;font-size:13px;margin-bottom:8px">
+      <input id="gapiSecret" placeholder="Client Secret" type="password"
+        style="width:100%;background:var(--bg);border:1px solid var(--line);
+        color:var(--fg);border-radius:10px;padding:10px;font-size:13px;margin-bottom:12px">
+      <button class="btn" id="gapiSave" style="width:100%;margin-bottom:8px">
+        ${cfg ? 'Cập nhật Client ID' : 'Lưu Client ID'}</button>
+      ${cfg ? `<button class="btn primary" id="gapiLogin" style="width:100%">
+        Đăng nhập Google</button>` : ''}
+      ${g.last_error ? `<p style="color:#ffc9c9;margin-top:10px">${esc(g.last_error)}</p>` : ''}
+    </div>`;
+
+  $('gapiSave').onclick = async () => {
+    const clientId = $('gapiId').value.trim();
+    const clientSecret = $('gapiSecret').value.trim();
+    if (!clientId) return toast('Chưa nhập Client ID');
+    try {
+      const r = await fetch('/api/gapi/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientId, clientSecret }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error);
+      toast('Đã lưu Client ID');
+      await loadGapi();
+    } catch (err) {
+      toast(err.message);
+    }
+  };
+  if ($('gapiLogin')) $('gapiLogin').onclick = doGapiLogin;
+}
+
+function renderGapiPending(p) {
+  $('gapiBox').innerHTML = `
+    <div class="acct">
+      <p>Mở <b>${esc(p.verification_url)}</b> rồi nhập mã này.
+         Google sẽ hỏi bạn chọn kênh nào — chọn đúng kênh bạn muốn dùng.</p>
+      <div class="code">${esc(p.user_code)}</div>
+      <p>Trang tự cập nhật khi bạn xác nhận xong.</p>
+    </div>`;
+}
+
+async function doGapiLogin() {
+  $('gapiBox').innerHTML = '<div class="empty"><span class="spin"></span><br>Đang lấy mã…</div>';
+  try {
+    const r = await fetch('/api/gapi/login', { method: 'POST' });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'Không lấy được mã');
+    renderGapiPending(j);
+    clearInterval(gapiPoll);
+    gapiPoll = setInterval(async () => {
+      await loadGapi();
+      if (gapiState?.logged_in) {
+        clearInterval(gapiPoll);
+        toast('Đã đăng nhập: ' + (gapiState.channel?.name || ''));
+        meLoaded = homeLoaded = false;
+        await loadMe();
+      } else if (!gapiState?.pending) {
+        clearInterval(gapiPoll); // hết hạn hoặc bị từ chối
+      }
+    }, 3000);
+  } catch (err) {
+    toast(err.message);
+    await loadGapi();
+  }
+}
+
+// ---- Nghe liên tục theo thể loại ---------------------------------------
+let genres = [], pickedGenre = null;
+
+/**
+ * "Hay nghe ở đây" — thống kê của chính cái dàn này, không phải gợi ý YouTube.
+ * Server đếm mỗi bài nghe quá 30 giây, nên danh sách phản ánh đúng thứ hay bật
+ * trong phòng chứ không phải thứ YouTube muốn đẩy.
+ */
+/**
+ * Phân trang cho một lưới bài.
+ *
+ * Đổ vài chục thẻ ra một lúc thì trên điện thoại phải cuộn mãi mới qua hết một
+ * mục. Dùng chung cho "hay nghe" và "video đã thích" — hai chỗ cùng một vấn đề,
+ * chép đôi đoạn này là chắc chắn sẽ sửa một chỗ quên chỗ kia.
+ *
+ * Số thẻ mỗi trang theo khổ màn hình: điện thoại 6 (lưới 2 cột = 3 hàng gọn),
+ * màn rộng 12 (lưới nhiều cột, 6 thẻ không đầy nổi một hàng nhìn rất trống).
+ */
+function createPager(listKey, gridId, pagerId) {
+  let all = [];
+  let page = 0;
+  const perPage = () => (isWide() ? 12 : 6);
+
+  function render() {
+    const per = perPage();
+    const pages = Math.max(1, Math.ceil(all.length / per));
+    page = Math.min(Math.max(0, page), pages - 1);
+
+    // lists[key] phải là ĐÚNG mảng đang hiển thị: trackListHTML đánh số theo
+    // chỉ mục trong lists[key], cắt trang mà không đổi nó là bấm nhầm bài.
+    lists[listKey] = all.slice(page * per, page * per + per);
+    $(gridId).innerHTML = trackListHTML(listKey, lists[listKey]);
+
+    $(pagerId + 'Pager').hidden = pages <= 1;
+    $(pagerId + 'PageInfo').textContent = `${page + 1}/${pages}`;
+    $(pagerId + 'Prev').disabled = page === 0;
+    $(pagerId + 'Next').disabled = page >= pages - 1;
+  }
+
+  $(pagerId + 'Prev').onclick = () => { page--; render(); };
+  $(pagerId + 'Next').onclick = () => { page++; render(); };
+  // Xoay ngang máy làm đổi số thẻ mỗi trang, phải vẽ lại kẻo trang hiện tại
+  // trỏ vào chỗ không còn tồn tại.
+  wideQuery.addEventListener('change', () => { if (all.length) render(); });
+
+  return {
+    set(items) { all = items || []; page = 0; render(); },
+    total: () => all.length,
+  };
+}
+
+const topPager = createPager('top', 'top', 'top');
+const histPager = createPager('history', 'myHistory', 'hist');
+
+async function loadTop() {
+  try {
+    const j = await (await fetch('/api/top?limit=30')).json();
+    const items = j.items || [];
+    // Chưa nghe gì thì giấu hẳn khối này, đừng bày ra một ô trống vô nghĩa.
+    if (!items.length) { $('topBox').style.display = 'none'; return; }
+    $('topBox').style.display = '';
+    $('topNote').textContent = items.length + ' bài';
+    topPager.set(items);
+  } catch {
+    $('topBox').style.display = 'none';
+  }
+}
+
+// ---- Ghép mix 15 bài --------------------------------------------------
+// Thay cho việc phát một video tổng hợp 1 tiếng: mỗi bài là một mục riêng
+// trong hàng chờ, bấm bài kế vẫn nhảy đúng bài chứ không mất 50 phút còn lại.
+let mixSrc = 'genre';
+
+function renderMixSrc() {
+  document.querySelectorAll('#mixSrcChips [data-mixsrc]').forEach((c) =>
+    c.classList.toggle('on', c.dataset.mixsrc === mixSrc));
+  $('mixQWrap').style.display = mixSrc === 'query' ? '' : 'none';
+}
+
+$('mixSrcChips').onclick = (e) => {
+  const c = e.target.closest('[data-mixsrc]');
+  if (!c || c.dataset.mixsrc === mixSrc) return;
+  mixSrc = c.dataset.mixsrc;
+  renderMixSrc();
+  if (mixSrc === 'query') {
+    // Nguồn này cần từ khoá, chưa gõ thì chưa có gì để tạo.
+    $('mixQ').focus();
+    $('mixResult').innerHTML =
+      '<div class="empty">Nhập tên ca sĩ hoặc bài hát rồi bấm Enter.</div>';
+  } else {
+    makeMix();
+  }
+};
+
+/** Vẽ một thẻ mix: ảnh bài đầu + nhãn "15 bài" chồng lên, bấm là phát cả mix. */
+function mixCardHTML(m, i) {
+  return `
+    <div class="card tap mixcard" data-mixplay="${i}" title="Bấm để phát cả playlist">
+      <div class="thumb">
+        <img src="${esc(m.thumb)}" alt="" loading="lazy" decoding="async">
+        <span class="mixbadge">▶ ${m.items.length} bài</span>
+      </div>
+      <div class="t">Playlist · ${esc(m.label)}</div>
+      <div class="s">${esc(m.sub)}</div>
+    </div>`;
+}
+
+async function makeMix() {
+  const params = new URLSearchParams({ source: mixSrc, count: '5' });
+  if (mixSrc === 'genre') {
+    if (!pickedGenre) { toast('Chọn một thể loại ở dưới trước'); return; }
+    params.set('genre', pickedGenre);
+  }
+  if (mixSrc === 'query') {
+    const q = $('mixQ').value.trim();
+    if (!q) { toast('Nhập từ khoá đã'); $('mixQ').focus(); return; }
+    params.set('q', q);
+  }
+
+  $('mixMake').disabled = true;
+  $('mixResult').innerHTML =
+    '<div class="empty"><span class="spin"></span><br>Đang tạo playlist…</div>';
+  try {
+    const r = await fetch('/api/mixes?' + params);
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'Không tạo được playlist');
+    if (!j.mixes || !j.mixes.length) throw new Error('Không tìm được bài nào để tạo playlist');
+
+    mixes = j.mixes;
+    $('mixResult').innerHTML =
+      `<div class="mixsub">${j.mixes.length} playlist từ ${esc(j.label)} ·
+         bấm một thẻ để phát cả 15 bài</div>
+       <div class="grid">${j.mixes.map(mixCardHTML).join('')}</div>`;
+  } catch (err) {
+    $('mixResult').innerHTML = '<div class="empty">' + esc(err.message) + '</div>';
+  } finally {
+    $('mixMake').disabled = false;
+  }
+}
+
+// Bấm một thẻ mix = đẩy cả 15 bài vào hàng chờ và phát ngay.
+let mixes = [];
+$('mixResult').addEventListener('click', (e) => {
+  const card = e.target.closest('[data-mixplay]');
+  if (!card) return;
+  const m = mixes[+card.dataset.mixplay];
+  if (!m) return;
+  cmd('add', { items: m.items, addedBy: myName, playNow: true });
+  toast(`Đang phát playlist ${m.items.length} bài · ${m.label}`);
+});
+
+$('mixMake').onclick = makeMix;
+$('mixReload').onclick = makeMix;
+$('mixQ').addEventListener('keydown', (e) => { if (e.key === 'Enter') makeMix(); });
+renderMixSrc();
+
+async function loadHome() {
+  homeLoaded = true;
+  autoMix = true;
+  loadTop();
+  if (!genres.length) {
+    try {
+      const j = await (await fetch('/api/genres')).json();
+      genres = j.genres || [];
+    } catch {
+      homeLoaded = false;
+      $('home').innerHTML = '<div class="empty">Không tải được danh sách thể loại.</div>';
+      return;
+    }
+  }
+  renderGenreChips();
+  if (!pickedGenre) {
+    // Mở tab lần đầu: chọn sẵn thể loại đang phát, hoặc cái đầu tiên.
+    pickedGenre = st?.station || genres[0]?.key || null;
+  }
+  if (pickedGenre) loadGenre(pickedGenre);
+  // Playlist tự hiện sẵn ngay lần mở đầu tiên.
+  if (mixSrc !== 'query' && !mixes.length) makeMix();
+}
+
+// Chỉ tự tạo playlist khi người dùng THẬT SỰ đang ở tab Home. Gọi lúc trang vừa
+// tải mà chưa ai mở tab đó là bắt Pi đi tìm kiếm cho một màn hình không ai xem.
+let autoMix = false;
+
+function renderGenreChips() {
+  $('homeChips').innerHTML = genres.map(g =>
+    `<span class="chip ${g.key === pickedGenre ? 'on' : ''}" data-genre="${esc(g.key)}">${esc(g.label)}</span>`
+  ).join('');
+}
+
+/** Thanh trạng thái + nút bật nghe liên tục cho thể loại đang xem. */
+function renderStationBar() {
+  const g = genres.find(x => x.key === pickedGenre);
+  if (!g) return ($('stationBar').innerHTML = '');
+  const live = st?.station === g.key;
+  $('stationBar').innerHTML = `
+    <div class="row ${live ? 'now' : ''}" style="margin-bottom:10px">
+      <div class="plph">${live ? '📻' : '♪'}</div>
+      <div class="meta">
+        <div class="t">${live ? 'Đang nghe liên tục · ' : 'Nghe liên tục · '}${esc(g.label)}</div>
+        <div class="s">${live
+          ? 'Hết hàng chờ là tự nối thêm bài cùng thể loại'
+          : 'Bật lên là nhạc chạy mãi, không phải thêm bài thủ công'}</div>
+      </div>
+      <div class="acts">
+        <button class="btn ${live ? '' : 'primary'}" id="stationBtn">
+          ${live ? 'Tắt' : 'Bật nghe liên tục'}</button>
+      </div>
+    </div>`;
+  $('stationBtn').onclick = () => {
+    if (live) {
+      cmd('station', { key: null });
+      toast('Đã tắt nghe liên tục');
+    } else {
+      cmd('station', { key: g.key, playNow: true });
+      toast('Bật nghe liên tục · ' + g.label + '…');
+    }
+  };
+}
+
+// Số thẻ hiện trên màn hình. Server trả về nhiều hơn, phần dư giữ lại để thế
+// chỗ ngay khi người dùng gạt một bài đi — không phải gọi mạng lại và chờ.
+const HOME_SHOWN = 20;
+let homeSpare = [];
+
+async function loadGenre(key) {
+  const changed = pickedGenre !== key;
+  pickedGenre = key;
+  renderGenreChips();
+  renderStationBar();
+  // Playlist đang lấy theo thể loại thì đổi thể loại phải đổi luôn playlist,
+  // nếu không nhãn ghi "từ Nhạc trẻ" mà bài lại là Bolero.
+  if (autoMix && changed && mixSrc === 'genre') makeMix();
+  $('home').innerHTML = '<div class="empty"><span class="spin"></span><br>Đang tải bài…</div>';
+  try {
+    const r = await fetch('/api/genre/' + encodeURIComponent(key));
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'Không tải được');
+    const all = j.items || [];
+    lists.home = all.slice(0, HOME_SHOWN);
+    homeSpare = all.slice(HOME_SHOWN);
+    if (lists.home.length) {
+      $('home').innerHTML = trackListHTML('home', lists.home);
+    } else if (j.exhausted) {
+      // Khác hẳn "YouTube không trả về gì": ở đây bài có, nhưng đã bị gạt hết.
+      // Nói đúng nguyên nhân và cho luôn nút sửa.
+      $('home').innerHTML =
+        `<div class="empty">Bạn đã gạt hết bài của thể loại này
+           (${j.hiddenSkipped} bài đang ẩn).<br>
+           <button class="btn" id="unhideAll" style="margin-top:12px">
+             Bỏ ẩn tất cả</button></div>`;
+      $('unhideAll').onclick = unhideAll;
+    } else {
+      $('home').innerHTML =
+        '<div class="empty">Không tìm được bài nào cho thể loại này.</div>';
+    }
+  } catch (err) {
+    $('home').innerHTML = '<div class="empty">' + esc(err.message) + '</div>';
+  }
+}
+
+async function unhideAll() {
+  try {
+    const j = await (await fetch('/api/unhide-all', { method: 'POST' })).json();
+    toast(`Đã bỏ ẩn ${j.removed} bài`);
+    if (pickedGenre) loadGenre(pickedGenre);
+  } catch {
+    toast('Không bỏ ẩn được, thử lại sau');
+  }
+}
+
+/**
+ * Gạt một bài gợi ý đi và đôn bài khác vào chỗ đó.
+ *
+ * Server ghi nhớ id vừa gạt nên bài đó không quay lại ở phần nghe liên tục,
+ * playlist hay bài liên quan nữa. Riêng tìm kiếm vẫn tìm ra — gõ đúng tên bài mà
+ * không thấy đâu còn khó hiểu hơn.
+ */
+async function hideSuggestion(listKey, idx) {
+  if (listKey !== 'home') return;
+  const track = (lists.home || [])[idx];
+  if (!track) return;
+
+  // Đôn bài dự phòng vào đúng vị trí vừa trống, để lưới không bị nhảy chỗ.
+  const spare = homeSpare.shift();
+  if (spare) lists.home.splice(idx, 1, spare);
+  else lists.home.splice(idx, 1);
+  $('home').innerHTML = lists.home.length
+    ? trackListHTML('home', lists.home)
+    : `<div class="empty">Hết bài để gợi ý rồi.<br>
+         <button class="btn" id="unhideAll" style="margin-top:12px">
+           Bỏ ẩn tất cả</button></div>`;
+  if (!lists.home.length) $('unhideAll').onclick = unhideAll;
+  toast(spare ? 'Đã bỏ, thay bằng bài khác' : 'Đã bỏ bài này');
+
+  try {
+    await fetch('/api/hide', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: track.id }),
+    });
+  } catch {
+    /* mất mạng thì thôi — thẻ đã biến khỏi màn hình, lần sau tải lại nó có thể
+       quay về, nhưng không đáng để chặn thao tác của người dùng vì chuyện đó */
+  }
+
+  // Sắp cạn dự phòng thì lấy thêm một mẻ, lần này server đã loại bài vừa ẩn.
+  if (homeSpare.length < 3 && pickedGenre) {
+    try {
+      const r = await fetch('/api/genre/' + encodeURIComponent(pickedGenre));
+      const j = await r.json();
+      if (r.ok) {
+        const have = new Set(lists.home.map((t) => t.id));
+        homeSpare = (j.items || []).filter((t) => !have.has(t.id));
+      }
+    } catch { /* im lặng, lần gạt sau sẽ thử lại */ }
+  }
+}
+
+$('homeChips').onclick = (e) => {
+  const c = e.target.closest('[data-genre]');
+  if (c) loadGenre(c.dataset.genre);
+};
+// ⟳ bốc một mẻ bài khác của cùng thể loại (server tự đổi từ khoá tìm kiếm).
+$('homeRefresh').onclick = () => {
+  loadTop();                                  // số lần nghe đã đổi trong lúc đó
+  if (pickedGenre) loadGenre(pickedGenre);
+};
+
+// ---- Playlist + lịch sử của tôi ---------------------------------------
+async function loadMe() {
+  await loadGapi();
+
+  if (!gapiState?.logged_in) {
+    $('myPlaylists').innerHTML = '<div class="empty">Chưa đăng nhập.</div>';
+    $('myHistory').innerHTML = '';
+    $('histPager').hidden = true;
+    return;
+  }
+  meLoaded = true;
+  $('myPlaylists').innerHTML = '<div class="empty"><span class="spin"></span></div>';
+  $('myHistory').innerHTML = '<div class="empty"><span class="spin"></span></div>';
+
+  fetch('/api/me/playlists').then(r => r.json().then(j => ({ ok: r.ok, j }))).then(({ ok, j }) => {
+    if (!ok) throw new Error(j.error);
+    renderPlaylists(j.items || []);
+  }).catch(err => {
+    $('myPlaylists').innerHTML = '<div class="empty">' + esc(err.message) + '</div>';
+  });
+
+  // Data API có "đã thích" nhưng KHÔNG có lịch sử xem, nên chỉ còn một đường.
+  //
+  // Chỗ này từng đọc một biến `viaApi` không tồn tại — sót lại từ thời còn hai
+  // cách đăng nhập. Nó ném ReferenceError NGAY, trước cả khi fetch chạy, nên
+  // .catch không bao giờ được gọi và vòng xoay quay mãi không dừng.
+  fetch('/api/me/liked')
+    .then(r => r.json().then(j => ({ ok: r.ok, j })))
+    .then(({ ok, j }) => {
+      if (!ok) throw new Error(j.error);
+      const liked = j.items || [];
+      if (liked.length) {
+        histPager.set(liked);
+        $('lastHead').textContent = `Video đã thích (${liked.length})`;
+      } else {
+        lists.history = [];
+        $('histPager').hidden = true;
+        $('myHistory').innerHTML = '<div class="empty">Chưa thích video nào.</div>';
+      }
+    })
+    .catch(err => {
+      $('histPager').hidden = true;
+      $('myHistory').innerHTML = '<div class="empty">' + esc(err.message) + '</div>';
+    });
+}
+
+function renderPlaylists(items) {
+  if (!items.length) {
+    $('myPlaylists').innerHTML = '<div class="empty">Không có playlist nào.</div>';
+    return;
+  }
+  $('myPlaylists').innerHTML = items.map(p => `
+    <div class="row">
+      ${p.thumb ? `<img src="${esc(p.thumb)}" alt="" loading="lazy" decoding="async">` : '<div class="plph">☰</div>'}
+      <div class="meta">
+        <div class="t">${esc(p.title)}</div>
+        <div class="s">${p.count ? p.count + ' bài' : 'Playlist'}</div>
+      </div>
+      <div class="acts">
+        <button class="icon" data-open="${esc(p.id)}" title="Xem danh sách bài">›</button>
+        <button class="icon" data-addall="${esc(p.id)}" title="Thêm tất cả vào hàng chờ">＋</button>
+      </div>
+    </div>`).join('');
+}
+
+/** Tên playlist lấy từ chính hàng vừa bấm, để tiêu đề nói đúng playlist nào. */
+function playlistTitleOf(btn) {
+  const row = btn.closest('.row');
+  return row?.querySelector('.meta .t')?.textContent?.trim() || 'Playlist';
+}
+
+$('myPlaylists').onclick = async (e) => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  const id = b.dataset.open || b.dataset.addall;
+  if (!id) return;
+  const label = b.textContent;
+  b.textContent = '…';
+  try {
+    const r = await fetch('/api/playlist/' + encodeURIComponent(id));
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'Không mở được playlist');
+    if (b.dataset.addall) {
+      cmd('add', { items: j.items, addedBy: myName });
+      toast(`Đã thêm ${j.items.length} bài`);
+    } else {
+      renderResults(j.items, `${playlistTitleOf(b)} · ${j.items.length} bài`, 'me');
+      showResults();
+      // Cuộn lên đầu: mở playlist khi đang ở giữa trang mà không cuộn thì
+      // người dùng thấy một mớ thẻ mới, không hiểu vừa xảy ra chuyện gì.
+      window.scrollTo(0, 0);
+    }
+  } catch (err) {
+    toast(err.message);
+  }
+  b.textContent = label;
+};
+
+loadGapi();
+
+/**
+ * Gắn nút ✕ xoá nhanh cho một ô nhập.
+ *
+ * Nút chỉ hiện khi ô có chữ — ô trống mà bày nút xoá thì vừa thừa vừa rối.
+ * Xoá xong đưa con trỏ về lại ô, để gõ từ khoá mới không phải bấm thêm lần nữa.
+ */
+function wireClearButton(inputId, buttonId) {
+  const inp = $(inputId);
+  const btn = $(buttonId);
+  const sync = () => { btn.hidden = inp.value.length === 0; };
+  inp.addEventListener('input', sync);
+  btn.onclick = () => { inp.value = ''; sync(); inp.focus(); };
+  sync();
+}
+wireClearButton('q', 'qClear');
+wireClearButton('mixQ', 'mixQClear');
+
+$('searchForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const q = $('q').value.trim();
+  if (!q) return;
+  showResults();
+  // Tìm mới thì ngữ cảnh playlist cũ hết hiệu lực — kể cả khi lượt tìm này
+  // hỏng, để lại thanh "‹ Quay lại" của playlist trước là sai hẳn.
+  $('resultsBack').hidden = true;
+  $('results').innerHTML = '<div class="empty"><span class="spin"></span><br>Đang tìm…</div>';
+  try {
+    const r = await fetch('/api/search?q=' + encodeURIComponent(q));
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'Lỗi tìm kiếm');
+    if (j.kind === 'playlist') {
+      renderResults(j.items, `Playlist · ${j.items.length} bài`);
+      const btn = document.createElement('button');
+      btn.className = 'btn primary';
+      btn.style.cssText = 'width:100%;margin-bottom:10px';
+      btn.textContent = `Thêm cả ${j.items.length} bài vào hàng chờ`;
+      btn.onclick = () => { cmd('add', { items: j.items, addedBy: myName }); toast('Đã thêm playlist'); };
+      $('results').prepend(btn);
+    } else {
+      renderResults(j.items, j.kind === 'video' ? 'Video từ link' : 'Kết quả cho “' + q + '”');
+    }
+  } catch (err) {
+    $('results').innerHTML = '<div class="empty">' + esc(err.message) + '</div>';
+  }
+};
+
+$('queue').onclick = (e) => {
+  const b = e.target.closest('button');
+  if (b) {
+    if (b.dataset.del) cmd('remove', { uid: b.dataset.del });
+    else if (b.dataset.up) {
+      const i = st.queue.findIndex(t => t.uid === b.dataset.up);
+      if (i > 0) cmd('move', { uid: b.dataset.up, to: i - 1 });
+    } else if (b.dataset.mix) {
+      cmd('radio', { uid: b.dataset.mix });
+      toast('Đang tìm bài cùng thể loại…');
+    }
+    return;
+  }
+  // Bấm vào bất kỳ chỗ nào khác trên dòng: nhảy tới bài đó.
+  const row = e.target.closest('[data-jumprow]');
+  if (row) cmd('jump', { uid: row.dataset.jumprow });
+};
+
+$('clearBtn').onclick = () => { cmd('clear'); toast('Đã xoá hàng chờ'); };
+$('bPlay').onclick = () => cmd('toggle');
+$('bNext').onclick = () => cmd('next');
+$('bPrev').onclick = () => cmd('prev');
+$('bShuffle').onclick = () => cmd('shuffle');
+$('bRepeat').onclick = () => cmd('repeat');
+$('bRadio').onclick = () => {
+  cmd('autoradio');
+  // st chưa kịp cập nhật nên đọc trạng thái hiện tại rồi lật.
+  toast(st?.autoRadio ? 'Tắt tự phát tiếp' : 'Bật tự phát tiếp bài cùng thể loại');
+};
+
+const seek = $('seek');
+['mousedown','touchstart'].forEach(ev => seek.addEventListener(ev, () => seeking = true));
+['mouseup','touchend'].forEach(ev => seek.addEventListener(ev, () => {
+  const d = st && (st.duration || (st.current && st.current.duration)) || 0;
+  if (d) cmd('seek', { to: seek.value / 1000 * d });
+  setTimeout(() => seeking = false, 400);
+}));
+
+const vol = $('vol');
+['mousedown','touchstart'].forEach(ev => vol.addEventListener(ev, () => volTouch = true));
+['mouseup','touchend'].forEach(ev => vol.addEventListener(ev, () => setTimeout(() => volTouch = false, 400)));
+vol.addEventListener('input', () => { volLive(); cmd('volume', { value: +vol.value }); });
+
+// ---- popup âm lượng -------------------------------------------------------
+// Popup tự đóng sau 4 giây không đụng tới, để không che mất hàng chờ.
+let volHideTimer = null;
+function volIcon(v) { return v === 0 ? '🔇' : (v < 45 ? '🔈' : '🔊'); }
+function volLive() {
+  const v = +vol.value;
+  $('volVal').textContent = v;
+  $('bVol').textContent = volIcon(v);
+  $('volNote').textContent = st?.audioMode === 'system'
+    ? 'Loa máy chủ · ' + (st.audioLabel || '')
+    : 'Mức trong trình phát' + (st?.audioReason ? ' — ' + st.audioReason : '');
+}
+function volArmHide() {
+  clearTimeout(volHideTimer);
+  volHideTimer = setTimeout(closeVol, 4000);
+}
+// Trạng thái popup nằm ở class .open chứ không phải thuộc tính hidden —
+// hidden là display:none, mà display không chuyển động được.
+function volOpen() { return $('volPop').classList.contains('open'); }
+function openVol() {
+  const pop = $('volPop');
+  const dock = document.querySelector('.dock');
+  pop.style.bottom = ((dock ? dock.offsetHeight : 200) + 10) + 'px';
+  pop.classList.add('open');
+  volLive(); volArmHide();
+}
+function closeVol() { clearTimeout(volHideTimer); $('volPop').classList.remove('open'); }
+function volNudge(delta) {
+  const v = Math.max(0, Math.min(100, +vol.value + delta));
+  vol.value = v;
+  volTouch = true; setTimeout(() => volTouch = false, 400);
+  volLive();
+  cmd('volume', { value: v });
+  volArmHide();
+}
+
+$('bVol').onclick = (e) => { e.stopPropagation(); volOpen() ? closeVol() : openVol(); };
+$('volDown').onclick = () => volNudge(-5);
+$('volUp').onclick = () => volNudge(+5);
+$('volPop').addEventListener('pointerdown', volArmHide);
+// Chạm ra ngoài thì đóng.
+document.addEventListener('pointerdown', (e) => {
+  if (volOpen() && !e.target.closest('.volwrap')) closeVol();
+});
+
+// ---- Tự ẩn thanh điều khiển khi lướt -----------------------------------
+//
+// Trên điện thoại thanh này chiếm gần 1/4 màn hình. Lướt xuống thì cho nó
+// trượt đi, lướt lên / dừng lướt / chạm nút thì kéo lại.
+const dockEl = document.querySelector('.dock');
+const DOCK_IDLE_MS = 4000;      // dừng lướt bao lâu thì thanh nổi lại
+const DOCK_MIN_SCROLL = 120;    // dưới mốc này coi như còn ở đầu trang, luôn hiện
+let dockIdleTimer = null;
+let lastScrollY = 0;
+let scrollTicking = false;
+
+let dockHoldUntil = 0;
+
+// Bật lớp riêng cho GPU ngay TRƯỚC khi trượt, và gỡ ngay khi trượt xong.
+// Nếu để will-change nằm mãi trong CSS thì thanh này (có backdrop-filter làm
+// mờ nền) chiếm một vùng nhớ ảnh riêng suốt thời gian mở trang — trên điện
+// thoại yếu là thấy chậm ngay. Bật đúng lúc cần thì vừa mượt vừa nhẹ.
+let dockMoveTimer = null;
+function dockMoving() {
+  dockEl.classList.add('moving');
+  clearTimeout(dockMoveTimer);
+  dockMoveTimer = setTimeout(() => dockEl.classList.remove('moving'), 500);
+}
+
+function showDock() {
+  if (dockEl.classList.contains('away')) dockMoving();
+  dockEl.classList.remove('away');
+}
+
+/**
+ * Hiện thanh VÀ giữ nó lại một lúc.
+ *
+ * Cần "giữ" chứ không chỉ "hiện": bấm vào một thẻ ở giữa trang thì trình duyệt
+ * cuộn thẻ đó vào tầm nhìn, sự kiện scroll bắn ra NGAY SAU cú bấm và lập tức
+ * giấu thanh đi lần nữa. Vừa chọn bài xong mà nút tạm dừng biến mất là hỏng.
+ */
+function keepDock() {
+  dockHoldUntil = Date.now() + DOCK_IDLE_MS;
+  showDock();
+}
+
+function hideDock() {
+  if (Date.now() < dockHoldUntil) return;
+  // Đang kéo thanh tua hay chỉnh âm lượng mà thanh trượt mất thì hỏng hẳn thao
+  // tác đang làm.
+  if (volOpen()) return;
+  if (dockEl.contains(document.activeElement)) return;
+  if (!dockEl.classList.contains('away')) dockMoving();
+  dockEl.classList.add('away');
+}
+
+function onScroll() {
+  const y = window.scrollY;
+  lastScrollY = y;
+
+  // CỐ Ý không hiện lại khi lướt ngược lên: lướt qua lướt lại tìm bài mà thanh
+  // cứ thò ra thụt vào theo từng cử động ngón tay thì rối mắt hơn là hữu ích.
+  // Chỉ ba thứ kéo nó về: về gần đầu trang, dừng lướt, hoặc chạm vào nhạc.
+  if (isWide() || y < DOCK_MIN_SCROLL) showDock();
+  else hideDock();
+
+  clearTimeout(dockIdleTimer);
+  dockIdleTimer = setTimeout(showDock, DOCK_IDLE_MS);
+}
+
+window.addEventListener('scroll', () => {
+  // Sự kiện scroll bắn ra rất dày; gom về mỗi khung hình một lần.
+  if (scrollTicking) return;
+  scrollTicking = true;
+  requestAnimationFrame(() => { scrollTicking = false; onScroll(); });
+}, { passive: true });
+
+// Mở popup âm lượng thì thanh phải đứng yên tại chỗ.
+['bVol', 'bPlay'].forEach((id) => $(id).addEventListener('pointerdown', keepDock));
+
+// Đo chiều cao header để gim thanh tab ngay bên dưới nó.
+//
+// Không đặt cứng bằng px được: header co giãn theo vùng an toàn của máy có tai
+// thỏ, theo việc có hiện cảnh báo "chưa có máy phát" hay không, và theo cả cỡ
+// chữ hệ thống người dùng chọn.
+const headerEl = document.querySelector('header');
+function syncHeaderHeight() {
+  document.documentElement.style.setProperty(
+    '--headerH', Math.round(headerEl.getBoundingClientRect().height) + 'px');
+}
+syncHeaderHeight();
+if (window.ResizeObserver) new ResizeObserver(syncHeaderHeight).observe(headerEl);
+window.addEventListener('orientationchange', () => setTimeout(syncHeaderHeight, 250));
+
+// Chốt trạng thái tab ngay từ đầu. Trên máy tính bảng nằm ngang, hàng chờ đã ở
+// cột phải nên mở thẳng vào tab chọn bài.
+//
+// PHẢI đặt ở cuối file: showTab('home') gọi loadHome(), mà loadHome đọc biến
+// `genres` khai báo bằng let ở dưới. Gọi sớm hơn là "Cannot access before
+// initialization" — và lỗi chỉ xuất hiện ở khổ rộng, nên rất dễ lọt.
+showTab(isWide() ? 'home' : 'queue');
+
+// Smooth local progress between server ticks.
+setInterval(() => {
+  if (st && st.playing && !seeking) { st.position += 1; renderProgress(); }
+  // Đồng hồ đếm ngược hẹn giờ chạy kể cả khi nhạc đang tạm dừng.
+  if (st && st.sleepAt) renderSleep();
+}, 1000);
+</script>
+</body>
+</html>

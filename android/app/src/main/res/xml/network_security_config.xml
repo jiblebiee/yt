@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Máy chủ jukebox chạy trong mạng LAN bằng HTTP thường (không có HTTPS),
+  nên phải cho phép cleartext. Android 9+ chặn HTTP nếu thiếu khai báo này.
+-->
+<network-security-config>
+  <base-config cleartextTrafficPermitted="true" />
+</network-security-config>
