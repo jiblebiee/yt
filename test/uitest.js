@@ -52,8 +52,10 @@ const ok = (n) => { pass++; console.log('  ✓', n); };
   await page.goto(BASE + '/remote', { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(800);
 
-  assert.strictEqual(await page.locator('.tab').count(), 4);
-  ok('trang remote có đủ 4 tab');
+  assert.deepStrictEqual(
+    await page.locator('.tab').evaluateAll((els) => els.map((e) => e.textContent.trim())),
+    ['Hàng chờ', 'Tìm kiếm', 'Home', 'Album', 'Của tôi']);
+  ok('trang remote có đủ 5 tab, đúng thứ tự');
 
   // Chưa có máy phát -> phải hiện cảnh báo
   await page.waitForSelector('#noPlayer:visible', { timeout: 4000 });
@@ -745,6 +747,213 @@ const ok = (n) => { pass++; console.log('  ✓', n); };
     'phải hiện lỗi thật thay vì quay mãi');
   await me.close();
   ok('gọi API hỏng: tắt vòng xoay và hiện đúng lỗi');
+
+  // -------------------------------------------------------------- Album
+  // Cách dùng thật: tạo album trống trước, rồi gặp bài nào thích thì bấm
+  // "💿 Thêm vào album" ngay trên thẻ bài. Muốn nghe thì sang tab Album bấm ▶.
+  const alb = await b2.newPage({ viewport: { width: 412, height: 900 } });
+  const albErrors = [];
+  alb.on('pageerror', (e) => albErrors.push(e.message));
+  await alb.route('**/api/genre/**', (route) =>
+    route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+      // id phải đúng 11 ký tự như id video thật: server lọc bỏ id sai, và
+      // album sẽ im lặng không nhận bài.
+      items: Array.from({ length: 6 }, (_, i) => ({
+        id: 'gOiY000000' + i, title: 'Bài gợi ý ' + i, author: 'CS ' + i, duration: 200,
+        thumb: '/icon-192.png' })), hiddenSkipped: 0, exhausted: false }) }));
+  await alb.goto(BASE + '/remote', { waitUntil: 'domcontentloaded' });
+  await alb.waitForTimeout(500);
+
+  // Dọn album do lần chạy trước để lại, để đếm cho chắc.
+  for (const a of (await (await alb.request.get(BASE + '/api/albums')).json()).albums) {
+    await alb.request.delete(BASE + '/api/albums/' + a.id);
+  }
+
+  // Tab Album phải có mặt, và lúc chưa có gì thì nói rõ phải làm sao.
+  await alb.click('.tab[data-tab="albums"]');
+  await alb.waitForTimeout(500);
+  assert.match(await alb.locator('#albums').innerText(), /Chưa có album nào/);
+  assert.match(await alb.locator('#albums').innerText(), /Thêm vào album/,
+    'lúc trống phải chỉ luôn cách dùng, đừng để một ô trống vô nghĩa');
+  ok('có tab Album riêng; lúc chưa có gì thì hướng dẫn luôn cách tạo');
+
+  // Tạo album TRỐNG trước.
+  await alb.click('#albNew');
+  await alb.waitForSelector('#albModal.open', { timeout: 3000 });
+  await alb.fill('#albName', 'Nhạc ngủ');
+  await alb.click('#albOk');
+  await alb.waitForTimeout(700);
+  assert.strictEqual(await alb.locator('#albums .albcard').count(), 1);
+  assert.match(await alb.locator('#albums').innerText(), /Nhạc ngủ/);
+  assert.match(await alb.locator('.albbadge').first().innerText(), /trống/,
+    'album rỗng phải nói là trống chứ không phải "0 bài" khó hiểu');
+  ok('tạo album trống trước, chưa cần có bài nào');
+
+  // Gặp bài thích thì bấm "💿 Thêm vào album". Mới có ĐÚNG MỘT album nên bỏ
+  // thẳng vào, không bắt chọn giữa một lựa chọn.
+  await alb.click('.tab[data-tab="home"]');
+  await alb.waitForTimeout(400);
+  await alb.click('#homeChips [data-genre]');
+  await alb.waitForSelector('#home .card', { timeout: 5000 });
+  await alb.click('#home .card [data-toalbum]');
+  await alb.waitForTimeout(700);
+  let list = (await (await alb.request.get(BASE + '/api/albums')).json()).albums;
+  assert.strictEqual(list[0].count, 1, 'một album thì bỏ thẳng vào, khỏi hỏi');
+  ok('bấm "💿 Thêm vào album" khi chỉ có một album: bỏ thẳng vào');
+
+  // Thêm đúng bài đó lần nữa: phải nói "đã có rồi", không nhân đôi.
+  await alb.click('#home .card [data-toalbum]');
+  await alb.waitForTimeout(700);
+  list = (await (await alb.request.get(BASE + '/api/albums')).json()).albums;
+  assert.strictEqual(list[0].count, 1, 'không được thêm trùng bài vào cùng album');
+  assert.match(await alb.locator('#toast').innerText(), /đã có bài này rồi/i);
+  ok('thêm lại đúng bài đó: báo "đã có rồi", không nhân đôi');
+
+  // Có NHIỀU album thì phải cho chọn.
+  await alb.request.post(BASE + '/api/albums', { data: { empty: true, name: 'Nhạc sáng' } });
+  await alb.click('.tab[data-tab="albums"]');
+  await alb.waitForTimeout(500);
+  await alb.click('.tab[data-tab="home"]');
+  await alb.waitForTimeout(400);
+  await alb.locator('#home .card [data-toalbum]').nth(1).click();
+  await alb.waitForSelector('#pickModal.open', { timeout: 3000 });
+  assert.strictEqual(await alb.locator('#pickList .pickitem').count(), 2,
+    'nhiều album thì hiện đủ để chọn');
+  assert.match(await alb.locator('#pickNote').innerText(), /Bài gợi ý 1/,
+    'hộp chọn phải nói rõ đang thêm BÀI NÀO');
+  // Chọn theo TÊN chứ không theo vị trí: danh sách xếp mới nhất trước, chọn
+  // theo số thứ tự là bài kiểm thử tự đánh đố mình.
+  await alb.locator('#pickList .pickitem', { hasText: 'Nhạc sáng' }).click();
+  await alb.waitForTimeout(700);
+  list = (await (await alb.request.get(BASE + '/api/albums')).json()).albums;
+  const nhacSang = list.find((a) => a.name === 'Nhạc sáng');
+  assert.strictEqual(nhacSang.count, 1, 'bài phải vào ĐÚNG album vừa chọn');
+  ok('nhiều album: hiện hộp cho chọn, bài vào đúng album đã chọn');
+
+  // Mở album ra xem có bài gì, rồi đẩy sang hàng chờ mà nghe.
+  await alb.click('.tab[data-tab="albums"]');
+  await alb.waitForTimeout(600);
+  await alb.click('#albums .albcard .thumb');
+  await alb.waitForTimeout(700);
+  assert.strictEqual(await alb.locator('#albBack').isVisible(), true);
+  assert.strictEqual(await alb.locator('#albListWrap').isHidden(), true,
+    'mở album là đổi nội dung tab, không phải chồng lên danh sách');
+  assert.strictEqual(await alb.locator('#albTracks .card').count(), 1);
+  ok('bấm thẻ album => mở ra xem các bài bên trong');
+
+  await alb.click('#albPlayAll');
+  await alb.waitForTimeout(700);
+  let qs = await (await alb.request.get(BASE + '/api/state')).json();
+  assert.strictEqual(qs.queue.length, 1, 'nút ▶ Phát đẩy cả album sang hàng chờ');
+  assert.strictEqual(qs.index, 0);
+  ok('nút ▶ Phát trong album: đẩy cả album sang hàng chờ và phát');
+
+  // Bỏ một bài khỏi album, ngay trong màn xem chi tiết.
+  await alb.click('#albTracks [data-albrm]');
+  await alb.waitForTimeout(800);
+  assert.match(await alb.locator('#albTracks').innerText(), /còn trống/,
+    'bỏ bài cuối cùng thì album trống, phải nói rõ');
+  qs = await (await alb.request.get(BASE + '/api/state')).json();
+  assert.strictEqual(qs.queue.length, 1, 'bỏ bài khỏi album không đụng hàng chờ');
+  ok('bỏ bài khỏi album ngay trong album; hàng chờ không bị đụng');
+
+  await alb.click('#albBackBtn');
+  await alb.waitForTimeout(400);
+  assert.strictEqual(await alb.locator('#albListWrap').isVisible(), true,
+    'bấm "‹ Album" là về danh sách, không phải tải lại trang');
+  ok('nút ‹ Album: quay lại danh sách album');
+
+  // Nút ＋ trên thẻ = nối vào cuối hàng chờ, không cắt ngang bài đang nghe.
+  const before = (await (await alb.request.get(BASE + '/api/state')).json()).queue.length;
+  // Chọn đúng album CÒN BÀI: album vừa bị bỏ bài ở trên đang trống, nối nó vào
+  // thì hàng chờ chẳng đổi gì và bài kiểm thử hỏng vì lý do chẳng liên quan.
+  await alb.locator('.albcard', { hasText: 'Nhạc ngủ' }).locator('[data-albadd]').click();
+  await alb.waitForTimeout(700);
+  qs = await (await alb.request.get(BASE + '/api/state')).json();
+  assert.ok(qs.queue.length > before, 'nút ＋ phải nối thêm vào hàng chờ');
+  assert.strictEqual(qs.index, 0, 'nối album không được nhảy bài đang nghe');
+  ok('nút ＋ trên thẻ album: nối vào cuối, không cắt ngang bài đang nghe');
+
+  // Nút 💿 ở thanh điều khiển vẫn làm việc ngược lại: lưu CẢ hàng chờ.
+  await alb.click('#bAlbum');
+  await alb.waitForSelector('#albModal.open', { timeout: 3000 });
+  assert.match(await alb.locator('#albModalNote').innerText(), /\d+ bài/,
+    'hộp lưu album phải nói rõ đang lưu bao nhiêu bài');
+  await alb.fill('#albName', 'Mạch tối nay');
+  await alb.click('#albOk');
+  await alb.waitForTimeout(800);
+  await alb.click('.tab[data-tab="albums"]');
+  await alb.waitForTimeout(600);
+  assert.match(await alb.locator('#albums .albcard').first().innerText(), /Mạch tối nay/,
+    'album mới nhất phải đứng đầu');
+  ok('nút 💿 ở thanh điều khiển: lưu cả hàng chờ thành album mới');
+
+  // Đổi tên và xoá.
+  await alb.click('#albums [data-albren]');
+  await alb.waitForSelector('#albModal.open', { timeout: 3000 });
+  assert.strictEqual(await alb.locator('#albName').inputValue(), 'Mạch tối nay',
+    'hộp đổi tên phải điền sẵn tên cũ');
+  await alb.fill('#albName', 'Nhạc khuya');
+  await alb.click('#albOk');
+  await alb.waitForTimeout(700);
+  assert.match(await alb.locator('#albums').innerText(), /Nhạc khuya/);
+  ok('đổi tên album ngay trên trang, không cần hộp thoại của trình duyệt');
+
+  const nAlb = await alb.locator('#albums .albcard').count();
+  await alb.click('#albums [data-albdel]');
+  await alb.waitForSelector('#albModal.open', { timeout: 3000 });
+  await alb.click('#albCancel');
+  await alb.waitForTimeout(500);
+  assert.strictEqual(await alb.locator('#albums .albcard').count(), nAlb, 'bấm Huỷ thì giữ nguyên');
+  await alb.click('#albums [data-albdel]');
+  await alb.waitForSelector('#albModal.open', { timeout: 3000 });
+  await alb.click('#albOk');
+  await alb.waitForTimeout(700);
+  assert.strictEqual(await alb.locator('#albums .albcard').count(), nAlb - 1);
+  ok('xoá album: hỏi trước, bấm Huỷ thì không mất gì');
+
+  // Nút 📻 cũ đã nhường chỗ cho 💿 — nhưng "nghe liên tục" vẫn phải còn chỗ
+  // bật, nếu không là mất tính năng chứ không phải đổi chỗ.
+  assert.strictEqual(await alb.locator('#bRadio').count(), 0, 'nút 📻 cũ phải được thay');
+  assert.strictEqual(await alb.locator('#bAlbum').count(), 1);
+  await alb.click('.tab[data-tab="home"]');
+  await alb.waitForTimeout(800);
+  assert.match(await alb.locator('#stationBar').innerText(), /nghe liên tục/i,
+    '"nghe liên tục" vẫn phải bật/tắt được ở tab Home');
+  ok('nút 📻 nhường chỗ cho 💿, "nghe liên tục" vẫn bật được ở tab Home');
+
+  // Năm tab trên màn hẹp: không được xuống dòng, và vẫn bấm trúng.
+  await alb.setViewportSize({ width: 360, height: 780 });
+  await alb.waitForTimeout(300);
+  const tabBoxes = await alb.locator('.tab').evaluateAll((els) =>
+    els.filter((e) => e.offsetParent !== null).map((e) => e.getBoundingClientRect()));
+  const rows = new Set(tabBoxes.map((b) => Math.round(b.top)));
+  assert.strictEqual(rows.size, 1, 'màn 360px: 5 tab phải nằm trên MỘT hàng');
+  assert.ok(Math.min(...tabBoxes.map((b) => b.height)) >= 30, 'tab vẫn đủ cao để chạm');
+  ok('màn 360px: 5 tab vẫn nằm gọn một hàng, đủ to để chạm');
+  await alb.setViewportSize({ width: 412, height: 900 });
+
+  // Nhiều album thì phân trang, đừng đổ hết ra một trang dài trên điện thoại.
+  await alb.route('**/api/albums', (route) => {
+    if (route.request().method() !== 'GET') return route.continue();
+    route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+      albums: Array.from({ length: 14 }, (_, i) => ({
+        id: 'alb' + i, name: 'Album ' + i, count: 10, createdAt: Date.now(),
+        thumb: '/icon-192.png', authors: 'CS' })) }) });
+  });
+  await alb.click('.tab[data-tab="albums"]');
+  await alb.waitForTimeout(600);
+  assert.strictEqual(await alb.locator('#albums .albcard').count(), 6,
+    'khổ điện thoại: 6 album một trang');
+  assert.strictEqual(await alb.locator('#albPager').isVisible(), true);
+  await alb.click('#albNext');
+  await alb.waitForTimeout(300);
+  assert.match(await alb.locator('#albums').innerText(), /Album 6/);
+  ok('nhiều album: phân trang 6 thẻ/trang trên điện thoại');
+
+  assert.deepStrictEqual(albErrors, [], 'phần album không được có lỗi JS');
+  ok('không có lỗi JS ở phần album');
+  await alb.close();
 
   // ------------------------------ tự ẩn thanh điều khiển khi lướt (điện thoại)
   const dockPage = await b2.newPage({ viewport: { width: 412, height: 800 } });

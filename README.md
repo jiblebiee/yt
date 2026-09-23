@@ -869,6 +869,40 @@ bằng nút **Đăng xuất**, hoặc bất cứ lúc nào tại
 - **Máy phát cần có loa và trình duyệt hiện đại** (Chromium). Raspberry Pi OS
   Desktop là đủ; bản Lite không có trình duyệt nên không làm máy phát được.
 
+## Album — tự gom những bài mình thích
+
+Có hẳn một tab **Album** riêng. Cách dùng:
+
+1. Bấm **＋** để tạo một album trống, đặt tên (ví dụ *Nhạc ngủ*).
+2. Đi tìm nhạc như bình thường. Gặp bài nào thích thì bấm **💿 Thêm vào album**
+   ngay dưới thẻ bài đó.
+   - Mới có một album thì bài vào thẳng album đó, không hỏi han gì.
+   - Có nhiều album thì hiện hộp cho chọn, kèm nút **＋ Album mới** nếu muốn
+     tạo album mới ngay tại chỗ.
+   - Bài đã có trong album rồi thì báo *"đã có bài này rồi"*, không nhân đôi.
+3. Muốn nghe: sang tab **Album**, bấm **▶** trên thẻ để đẩy cả album sang hàng
+   chờ và phát, hoặc **＋** để nối vào cuối hàng chờ mà không cắt ngang bài
+   đang nghe.
+
+Bấm vào thẻ album là **mở ra xem bên trong**: thấy từng bài, bấm một bài để
+phát ngay, hoặc **✕ Bỏ khỏi album**. Bấm **‹ Album** để quay lại danh sách —
+đổi nội dung ngay trong tab, không phải tải lại trang.
+
+Trên thẻ album còn có **✎** đổi tên và **🗑** xoá (hỏi lại trước khi xoá).
+
+Nút **💿** ở thanh điều khiển làm việc ngược lại: lưu **cả hàng chờ** đang nghe
+thành một album mới. Để trống ô tên thì máy tự đặt — lấy tên ca sĩ nếu họ chiếm
+đa số trong album, không thì lấy ngày và số bài.
+
+Album lưu ở `data/albums.json`, kèm cả tên bài, ca sĩ và ảnh chứ không chỉ id —
+mở album ra là thấy ngay danh sách, không phải hỏi YouTube lại, nên mạng trục
+trặc thì album vẫn xem được và phát nhanh hơn. Album trống cũng được giữ
+nguyên, vì người ta cố ý tạo trước rồi mới nhặt bài bỏ vào.
+
+Nút 💿 này **thay chỗ nút 📻** cũ. Tính năng "nghe liên tục" (hết hàng chờ thì
+tự nối bài cùng thể loại) không mất đi đâu — nó vẫn bật/tắt được ở tab **Home**,
+ngay dưới phần chọn thể loại, chỗ đó hợp lý hơn vì nằm cạnh cái nó dựa vào.
+
 ## Hàng chờ còn nguyên khi khởi động lại
 
 Hàng chờ được lưu vào `data/queue.json`, vị trí đang nghe vào `data/playhead.json`.
@@ -891,13 +925,13 @@ rồi restart — hoặc bấm nút xoá hàng chờ trên điện thoại như 
 
 ```bash
 npm test                 # chạy cả bảy bộ
-node test/selftest.js    # 41 bài: parser, lọc bài, ghép playlist, ẩn bài, luồng player<->remote
+node test/selftest.js    # 59 bài: parser, lọc bài, ghép playlist, ẩn bài, luồng player<->remote
 node test/gapitest.js    # 18 bài: YouTube Data API (fetch giả lập)
 node test/audiotest.js   #  7 bài: âm lượng loa máy chủ (pactl giả lập)
 node test/persisttest.js # 11 bài: hàng chờ còn nguyên sau restart / mất điện
 node test/playertest.js  #  8 bài: trang phát (YouTube giả): bài kẹt, nhiều tab
 node test/shelltest.js   # 16 bài: script cài đặt (dọn tên miền cũ, launcher kiosk)
-node test/uitest.js      # 78 bài: giao diện thật bằng Chromium (cần playwright)
+node test/uitest.js      # 95 bài: giao diện thật bằng Chromium (cần playwright)
 ```
 
 Năm bộ đầu không cần internet. `uitest.js` cần `npm install -D playwright`; nếu

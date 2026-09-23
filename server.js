@@ -25,7 +25,7 @@ const sysAudio = require('./audio.js');
 // Phải khớp với hằng BUILD trong public/remote.html. Trang điều khiển so sánh
 // hai giá trị này và cảnh báo nếu lệch — dấu hiệu service chưa được restart sau
 // khi cài bản mới (file tĩnh đọc từ đĩa nên mới, còn server.js vẫn là bản cũ).
-const BUILD = '2026-08-31.2';
+const BUILD = '2026-09-01.2';
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const HOST = process.env.HOST || '0.0.0.0';
@@ -1832,6 +1832,212 @@ app.post('/api/unhide-all', (_req, res) => {
   res.json({ ok: true, removed: n });
 });
 
+// ---------------------------------------------------------------------------
+// Album — lưu nguyên hàng chờ lại để lần sau bật một cái là phát cả mạch
+//
+// Khác "playlist gợi ý" ở tab Home (máy tự ghép, mỗi lần một khác): album là
+// danh sách CHÍNH BẠN đã xếp, không tự đổi, và còn nguyên sau khi tắt máy.
+//
+// Lưu cả thông tin bài (tên, ca sĩ, ảnh) chứ không chỉ id: mở album ra là thấy
+// ngay danh sách, không phải hỏi YouTube lại — mạng có trục trặc thì album vẫn
+// xem được, và phát nhanh hơn hẳn.
+// ---------------------------------------------------------------------------
+
+const ALBUMS_PATH = path.join(DATA_DIR, 'albums.json');
+const ALBUM_MAX = 200;              // số album giữ lại
+const ALBUM_TRACKS_MAX = 300;       // số bài mỗi album, bằng trần hàng chờ
+const ALBUM_NAME_MAX = 60;
+
+let albums = loadAlbums();
+
+function loadAlbums() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(ALBUMS_PATH, 'utf8'));
+    if (!Array.isArray(raw)) return [];
+    // File nằm trên đĩa, sửa tay hay hỏng nửa chừng thì vẫn phải mở được máy:
+    // bỏ album hỏng, bỏ bài hỏng, chứ không làm sập cả server.
+    return raw
+      .filter((a) => a && typeof a === 'object' && Array.isArray(a.tracks))
+      .map((a) => ({
+        id: String(a.id || '').slice(0, 40) || newAlbumId(),
+        name: String(a.name || 'Album').slice(0, ALBUM_NAME_MAX),
+        createdAt: Number(a.createdAt) || Date.now(),
+        tracks: a.tracks.map(cleanTrack).filter(Boolean).slice(0, ALBUM_TRACKS_MAX),
+      }))
+      // KHÔNG lọc album rỗng: người ta cố ý tạo album trống trước rồi mới
+      // nhặt bài bỏ vào dần.
+      .slice(0, ALBUM_MAX);
+  } catch (err) {
+    if (err.code !== 'ENOENT') console.warn('[album] bỏ qua file hỏng:', err.message);
+    return [];
+  }
+}
+
+function saveAlbums() {
+  try {
+    writeAtomic(ALBUMS_PATH, JSON.stringify(albums));
+  } catch (err) {
+    console.error('[album] không ghi được:', err.message);
+  }
+}
+
+let albumSeq = 0;
+const newAlbumId = () => `a${Date.now().toString(36)}${(albumSeq++).toString(36)}`;
+
+/** Tên tự đặt khi người dùng để trống: lấy ca sĩ hay gặp nhất + ngày. */
+function autoAlbumName(tracks) {
+  const count = {};
+  for (const t of tracks) {
+    const a = (t.author || '').trim();
+    if (a) count[a] = (count[a] || 0) + 1;
+  }
+  const top = Object.entries(count).sort((x, y) => y[1] - x[1])[0];
+  const d = new Date();
+  const day = `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
+  // Chỉ lấy tên ca sĩ khi họ chiếm đa số, nếu không thì cái tên sẽ nói sai về
+  // nội dung album.
+  if (top && top[1] >= Math.max(2, tracks.length / 2)) return `${top[0]} · ${day}`;
+  return `Album ${day} · ${tracks.length} bài`;
+}
+
+function createAlbum(name, tracks, { allowEmpty = false } = {}) {
+  const list = (tracks || []).map(cleanTrack).filter(Boolean).slice(0, ALBUM_TRACKS_MAX);
+  if (!list.length && !allowEmpty) return null;
+  const album = {
+    id: newAlbumId(),
+    name: String(name || '').trim().slice(0, ALBUM_NAME_MAX) ||
+      (list.length ? autoAlbumName(list) : 'Album mới'),
+    createdAt: Date.now(),
+    tracks: list,
+  };
+  albums.unshift(album);                 // mới nhất lên đầu
+  if (albums.length > ALBUM_MAX) albums.length = ALBUM_MAX;
+  saveAlbums();
+  return album;
+}
+
+const findAlbum = (id) => albums.find((a) => a.id === id) || null;
+
+function removeAlbum(id) {
+  const before = albums.length;
+  albums = albums.filter((a) => a.id !== id);
+  if (albums.length !== before) saveAlbums();
+  return albums.length !== before;
+}
+
+function renameAlbum(id, name) {
+  const a = findAlbum(id);
+  if (!a) return null;
+  const n = String(name || '').trim().slice(0, ALBUM_NAME_MAX);
+  if (!n) return null;
+  a.name = n;
+  saveAlbums();
+  return a;
+}
+
+/**
+ * Thêm bài vào album có sẵn.
+ * Trả về { added, dup, full } để giao diện nói được ĐÚNG chuyện gì đã xảy ra —
+ * "đã thêm" và "bài này có rồi" là hai việc khác nhau.
+ */
+function addToAlbum(id, items) {
+  const a = findAlbum(id);
+  if (!a) return null;
+  const have = new Set(a.tracks.map((t) => t.id));
+  let added = 0;
+  let dup = 0;
+  let full = 0;
+  let invalid = 0;
+  for (const raw of items || []) {
+    const t = cleanTrack(raw);
+    // Đếm cả bài KHÔNG hợp lệ: bỏ qua im lặng thì giao diện chỉ biết "không
+    // thêm được gì" và đành đoán bừa lý do (đã từng báo nhầm là "album đầy").
+    if (!t) { invalid++; continue; }
+    if (have.has(t.id)) { dup++; continue; }   // cùng một bài hai lần trong album là thừa
+    if (a.tracks.length >= ALBUM_TRACKS_MAX) { full++; continue; }
+    a.tracks.push(t);
+    have.add(t.id);
+    added++;
+  }
+  if (added) saveAlbums();
+  return { album: a, added, dup, full, invalid };
+}
+
+/** Bớt một bài khỏi album, tính theo id video (không phải uid hàng chờ). */
+function removeFromAlbum(id, videoId) {
+  const a = findAlbum(id);
+  if (!a) return null;
+  const before = a.tracks.length;
+  a.tracks = a.tracks.filter((t) => t.id !== videoId);
+  if (a.tracks.length !== before) saveAlbums();
+  return { album: a, removed: before - a.tracks.length };
+}
+
+/** Tóm tắt cho danh sách: không gửi cả trăm bài về điện thoại khi chưa cần. */
+const albumBrief = (a) => ({
+  id: a.id,
+  name: a.name,
+  count: a.tracks.length,
+  createdAt: a.createdAt,
+  thumb: a.tracks[0]?.thumb || '',
+  authors: [...new Set(a.tracks.map((t) => t.author).filter(Boolean))].slice(0, 3).join(', '),
+});
+
+app.get('/api/albums', (_req, res) => res.json({ albums: albums.map(albumBrief) }));
+
+app.get('/api/albums/:id', (req, res) => {
+  const a = findAlbum(req.params.id);
+  if (!a) return res.status(404).json({ error: 'Không có album này' });
+  res.json(a);
+});
+
+/**
+ * Tạo album. Mặc định lấy nguyên hàng chờ đang có — đó là cách dùng chính:
+ * xếp xong một mạch bài ưng ý thì bấm một cái để giữ lại.
+ */
+app.post('/api/albums', (req, res) => {
+  // empty=true: tạo album RỖNG để nhặt bài bỏ vào dần — đây là cách dùng chính.
+  if (req.body?.empty) {
+    const a = createAlbum(req.body?.name, [], { allowEmpty: true });
+    return res.json({ ok: true, album: albumBrief(a) });
+  }
+  const items = Array.isArray(req.body?.items) ? req.body.items : state.queue;
+  if (!items.length) {
+    return res.status(400).json({ error: 'Hàng chờ đang trống, chưa có gì để lưu' });
+  }
+  const a = createAlbum(req.body?.name, items);
+  if (!a) return res.status(400).json({ error: 'Không có bài nào hợp lệ để lưu' });
+  res.json({ ok: true, album: albumBrief(a) });
+});
+
+/** Thêm một hoặc nhiều bài vào album đã có. */
+app.post('/api/albums/:id/tracks', (req, res) => {
+  const items = Array.isArray(req.body?.items)
+    ? req.body.items
+    : (req.body?.item ? [req.body.item] : []);
+  if (!items.length) return res.status(400).json({ error: 'Thiếu bài để thêm' });
+  const r = addToAlbum(req.params.id, items);
+  if (!r) return res.status(404).json({ error: 'Không có album này' });
+  res.json({ ok: true, added: r.added, dup: r.dup, full: r.full, invalid: r.invalid,
+             album: albumBrief(r.album) });
+});
+
+app.delete('/api/albums/:id/tracks/:videoId', (req, res) => {
+  const r = removeFromAlbum(req.params.id, req.params.videoId);
+  if (!r) return res.status(404).json({ error: 'Không có album này' });
+  res.json({ ok: true, removed: r.removed, album: albumBrief(r.album) });
+});
+
+app.post('/api/albums/:id/rename', (req, res) => {
+  const a = renameAlbum(req.params.id, req.body?.name);
+  if (!a) return res.status(400).json({ error: 'Không đổi được tên' });
+  res.json({ ok: true, album: albumBrief(a) });
+});
+
+app.delete('/api/albums/:id', (req, res) => {
+  res.json({ ok: removeAlbum(req.params.id) });
+});
+
 app.get('/api/state', (_req, res) => res.json(snapshot()));
 
 app.get('/healthz', (_req, res) =>
@@ -2136,6 +2342,23 @@ const COMMANDS = {
   add(m) {
     addTracks(m.items || (m.item ? [m.item] : []), m.addedBy, !!m.playNow);
   },
+  /**
+   * Phát một album đã lưu.
+   *   mode 'replace' (mặc định): thay hàng chờ và phát từ bài đầu — bấm vào
+   *     album là nghe được ngay, đúng cái người ta mong đợi.
+   *   mode 'append': nối vào cuối hàng chờ, không cắt ngang bài đang nghe.
+   */
+  album(m) {
+    const a = findAlbum(String(m.id || ''));
+    if (!a || !a.tracks.length) return;
+    if (m.mode === 'append') {
+      addTracks(a.tracks, a.name, false);
+      return;
+    }
+    state.queue = [];
+    state.index = -1;
+    addTracks(a.tracks, a.name, true);
+  },
   remove(m) {
     const i = state.queue.findIndex((t) => t.uid === m.uid);
     if (i < 0) return;
@@ -2339,6 +2562,15 @@ module.exports = {
   MIX_SIZE,
   notePlay,
   maybeCountPlay,
+  createAlbum,
+  addToAlbum,
+  removeFromAlbum,
+  findAlbum,
+  removeAlbum,
+  renameAlbum,
+  autoAlbumName,
+  albumBrief,
+  ALBUMS_PATH,
   saveQueueNow,
   savePlayheadNow,
   loadQueue,

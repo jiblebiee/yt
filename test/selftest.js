@@ -15,6 +15,8 @@ const fs = require('fs');
 const WebSocket = require('ws');
 const {
   server,
+  autoAlbumName,
+  ALBUMS_PATH,
   parseYouTubeInput,
   extractInitialData,
   trackFromNode,
@@ -680,6 +682,160 @@ const wait = (ms = 120) => new Promise((r) => setTimeout(r, ms));
   await wait();
   assert.ok(remote.msgs.some((m) => m.type === 'toast'), 'remote được báo lỗi');
   ok('video lỗi => báo remote và tự chuyển bài');
+
+  // ------------------------------------------------------------ Album
+  // Lưu nguyên hàng chờ lại để lần sau bật một cái là phát cả mạch.
+  const BASE_URL = `http://127.0.0.1:${process.env.PORT}`;
+  const api = async (url, opts) => {
+    const r = await fetch(BASE_URL + url, opts);
+    return { ok: r.ok, status: r.status, j: await r.json() };
+  };
+  const postJson = (url, body) => api(url, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body || {}),
+  });
+
+  // Không có bài nào thì phải từ chối, kèm lý do đọc được — đừng tạo album rỗng.
+  // (Gửi items rỗng chứ không dùng lệnh 'clear': 'clear' cố ý GIỮ LẠI bài đang
+  // phát, nên hàng chờ không bao giờ rỗng hẳn khi đang nghe dở.)
+  const empty = await postJson('/api/albums', { items: [] });
+  assert.strictEqual(empty.status, 400);
+  assert.match(empty.j.error, /trống/i);
+  ok('hàng chờ trống: không tạo album, báo đúng lý do');
+
+  remote.send(JSON.stringify({ type: 'cmd', cmd: 'clear' }));
+  await wait();
+  remote.send(JSON.stringify({ type: 'cmd', cmd: 'add', items: [
+    track('ccccccccccc', 'Bài A'), track('ddddddddddd', 'Bài B'),
+  ], addedBy: 'Máy A' }));
+  await wait();
+  // 'clear' giữ lại bài đang phát, nên hàng chờ lúc này là bài đó + 2 bài vừa
+  // thêm. Album phải lấy ĐÚNG những gì đang có, không nhiều không ít.
+  const queueNow = last(remote).queue.map((t) => t.title);
+  const made = await postJson('/api/albums', { name: 'Nhạc tối thứ bảy' });
+  assert.strictEqual(made.j.album.name, 'Nhạc tối thứ bảy');
+  assert.strictEqual(made.j.album.count, queueNow.length);
+  ok('lưu hàng chờ thành album, đúng số bài đang có');
+
+  // Để trống tên thì phải TỰ đặt, chứ không tạo ra album tên rỗng.
+  const auto = await postJson('/api/albums', { name: '   ' });
+  assert.ok(auto.j.album.name.length > 3, 'tên tự đặt không được rỗng');
+  ok('bỏ trống tên => tự đặt tên có nghĩa');
+
+  // Tên tự đặt theo ca sĩ chỉ đúng khi họ chiếm đa số, nếu không là nói sai
+  // về nội dung album.
+  const one = (n, a) => ({ id: 'x', title: n, author: a });
+  assert.match(autoAlbumName([one('1', 'Mỹ Tâm'), one('2', 'Mỹ Tâm'), one('3', 'Đen')]),
+    /^Mỹ Tâm · /);
+  assert.match(autoAlbumName([one('1', 'A'), one('2', 'B'), one('3', 'C'), one('4', 'D')]),
+    /^Album /);
+  ok('tên tự đặt: lấy tên ca sĩ khi họ chiếm đa số, không thì lấy ngày');
+
+  // Album TRỐNG: tạo trước rồi nhặt bài bỏ vào dần — đây mới là cách dùng chính.
+  const blank = await postJson('/api/albums', { empty: true, name: 'Nhạc ngủ' });
+  assert.strictEqual(blank.j.album.count, 0);
+  assert.strictEqual(blank.j.album.name, 'Nhạc ngủ');
+  const blankId = blank.j.album.id;
+
+  const add1 = await postJson('/api/albums/' + blankId + '/tracks',
+    { item: track('eeeeeeeeeee', 'Bài C') });
+  assert.strictEqual(add1.j.added, 1);
+  assert.strictEqual(add1.j.album.count, 1);
+  ok('tạo album trống rồi thêm từng bài vào');
+
+  // Cùng một bài hai lần trong một album là thừa; phải nói rõ là trùng chứ
+  // không im lặng "thành công".
+  const again2 = await postJson('/api/albums/' + blankId + '/tracks',
+    { item: track('eeeeeeeeeee', 'Bài C') });
+  assert.strictEqual(again2.j.added, 0);
+  assert.strictEqual(again2.j.dup, 1);
+  assert.strictEqual(again2.j.album.count, 1);
+  ok('thêm trùng bài: không nhân đôi, báo đúng là trùng');
+
+  // Bài hỏng (id không phải id video) phải được đếm riêng, không báo nhầm là
+  // "album đã đầy" — đã từng báo nhầm đúng kiểu đó.
+  const bad = await postJson('/api/albums/' + blankId + '/tracks', { item: { id: 'xx', title: 'Hỏng' } });
+  assert.strictEqual(bad.j.added, 0);
+  assert.strictEqual(bad.j.invalid, 1);
+  assert.strictEqual(bad.j.full, 0);
+  ok('bài có id sai: đếm riêng là không hợp lệ, không báo nhầm "đầy"');
+
+  assert.strictEqual((await postJson('/api/albums/khong-co/tracks',
+    { item: track('eeeeeeeeeee', 'x') })).status, 404);
+  ok('thêm vào album không tồn tại: báo 404');
+
+  const rm = await api('/api/albums/' + blankId + '/tracks/eeeeeeeeeee', { method: 'DELETE' });
+  assert.strictEqual(rm.j.removed, 1);
+  assert.strictEqual(rm.j.album.count, 0);
+  ok('bỏ một bài khỏi album');
+
+  // Album rỗng vẫn phải còn sau khi nạp lại từ đĩa — người ta cố ý tạo trước.
+  assert.ok(JSON.parse(fs.readFileSync(ALBUMS_PATH, 'utf8')).some((a) => a.id === blankId),
+    'album rỗng không được bị dọn mất');
+  assert.strictEqual((await api('/api/albums/' + blankId)).j.tracks.length, 0);
+  ok('album rỗng vẫn được giữ lại, không bị dọn mất');
+
+  await api('/api/albums/' + blankId, { method: 'DELETE' });
+
+  const listed = await api('/api/albums');
+  assert.strictEqual(listed.j.albums.length, 2);
+  assert.strictEqual(listed.j.albums[0].name, auto.j.album.name,
+    'album mới nhất phải đứng đầu');
+  assert.ok(!listed.j.albums[0].tracks,
+    'danh sách chỉ gửi tóm tắt, không kèm cả trăm bài');
+  ok('danh sách album: mới nhất trước, chỉ gửi tóm tắt');
+
+  const albumId = made.j.album.id;
+  // Phát album = thay hàng chờ và chạy ngay từ bài đầu.
+  remote.send(JSON.stringify({ type: 'cmd', cmd: 'clear' }));
+  await wait();
+  remote.send(JSON.stringify({ type: 'cmd', cmd: 'album', id: albumId }));
+  await wait();
+  let sAlb = last(remote);
+  assert.deepStrictEqual(sAlb.queue.map((t) => t.title), queueNow,
+    'phát album là thay hàng chờ bằng đúng danh sách đã lưu');
+  assert.strictEqual(sAlb.index, 0, 'phát album là chạy từ bài đầu');
+  ok('phát album: thay hàng chờ, chạy ngay từ bài đầu');
+
+  // Nối vào cuối thì KHÔNG được cắt ngang bài đang nghe.
+  remote.send(JSON.stringify({ type: 'cmd', cmd: 'album', id: albumId, mode: 'append' }));
+  await wait();
+  sAlb = last(remote);
+  assert.strictEqual(sAlb.queue.length, queueNow.length * 2, 'nối thêm vào cuối');
+  assert.strictEqual(sAlb.index, 0, 'nối album không được nhảy bài đang nghe');
+  ok('nối album vào cuối: không cắt ngang bài đang nghe');
+
+  // uid phải là uid MỚI, nếu không hai bản sao trong hàng chờ trùng uid và
+  // nút xoá sẽ xoá nhầm cái kia.
+  const uids = sAlb.queue.map((t) => t.uid);
+  assert.strictEqual(new Set(uids).size, sAlb.queue.length,
+    'mỗi lần thêm phải sinh uid riêng');
+  ok('thêm album hai lần: uid không trùng nhau');
+
+  assert.match((await postJson('/api/albums/' + albumId + '/rename', { name: 'Tên mới' })).j.album.name,
+    /^Tên mới$/);
+  assert.strictEqual((await postJson('/api/albums/khong-co/rename', { name: 'x' })).status, 400);
+  ok('đổi tên album; id không có thì báo lỗi chứ không tạo mới');
+
+  assert.strictEqual((await api('/api/albums/' + albumId, { method: 'DELETE' })).j.ok, true);
+  assert.strictEqual((await api('/api/albums')).j.albums.length, 1);
+  assert.strictEqual((await api('/api/albums/' + albumId)).status, 404);
+  ok('xoá album; xem album đã xoá thì báo 404');
+
+  // Xoá album KHÔNG được đụng tới hàng chờ đang phát.
+  assert.strictEqual(last(remote).queue.length, queueNow.length * 2,
+    'xoá album không đụng hàng chờ');
+  ok('xoá album không ảnh hưởng hàng chờ đang nghe');
+
+  // Còn nguyên sau khi khởi động lại (ghi xuống data/albums.json).
+  assert.ok(fs.existsSync(ALBUMS_PATH), 'phải ghi ra data/albums.json');
+  const onDisk = JSON.parse(fs.readFileSync(ALBUMS_PATH, 'utf8'));
+  assert.strictEqual(onDisk.length, 1);
+  assert.ok(onDisk[0].tracks[0].title, 'lưu cả tên bài, không chỉ id');
+  ok('album ghi xuống đĩa kèm thông tin bài, còn nguyên sau khi tắt máy');
+
+  remote.send(JSON.stringify({ type: 'cmd', cmd: 'clear' }));
+  await wait();
 
   // ĐIỀU KIỆN CỐT LÕI: player đóng => nhạc dừng
   remote.send(JSON.stringify({ type: 'cmd', cmd: 'play' }));

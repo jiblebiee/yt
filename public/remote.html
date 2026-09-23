@@ -91,8 +91,15 @@
   .tabs{position:sticky;top:var(--headerH,0px);z-index:4;
     display:flex;gap:6px;padding:12px 14px;background:var(--bg);
     border-bottom:1px solid var(--line)}
-  .tab{flex:1;text-align:center;padding:9px;border-radius:10px;background:var(--panel);
-    border:1px solid var(--line);color:var(--muted);font-size:14px;cursor:pointer}
+  /* Năm tab trên màn 360px: chữ phải co lại, nếu không "Hàng chờ" bị xuống
+     dòng và thanh tab cao gấp đôi. */
+  .tab{flex:1;min-width:0;text-align:center;padding:9px 4px;border-radius:10px;
+    background:var(--panel);border:1px solid var(--line);color:var(--muted);
+    font-size:13.5px;cursor:pointer;white-space:nowrap;overflow:hidden;
+    text-overflow:ellipsis}
+  /* Dưới 480px: 5 tab chia nhau chiều ngang, chữ phải nhỏ lại thì "Hàng chờ"
+     mới không bị cắt thành "Hàng c...". Đo trên máy 360px là hẹp nhất còn gặp. */
+  @media (max-width:480px){ .tab{font-size:12px;padding:9px 2px;letter-spacing:-.2px} }
   .tab{transition:background var(--t-med) var(--ease),color var(--t-med) var(--ease),
     border-color var(--t-med) var(--ease),transform var(--t-fast) var(--ease)}
   .tab:active{transform:scale(.97)}
@@ -349,6 +356,65 @@
     border-radius:12px;padding:16px 10px;margin:14px 0;user-select:all}
   .plph{width:58px;height:44px;border-radius:8px;flex:none;background:var(--panel2);
     display:grid;place-items:center;color:var(--muted);font-size:17px}
+  /* ---- Album (hàng chờ đã lưu lại) ------------------------------------- */
+  /* Thẻ album phải nhìn khác thẻ bài lẻ: bấm vào là phát CẢ MẠCH, không phải
+     một bài. Ảnh phủ tối + nhãn số bài ở giữa nói rõ điều đó. */
+  .albcard .thumb::after{content:'';position:absolute;inset:0;
+    background:linear-gradient(180deg,rgba(0,0,0,.1),rgba(0,0,0,.66))}
+  .albbadge{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:1;
+    background:rgba(11,15,22,.82);color:#fff;font-size:13px;font-weight:700;
+    padding:7px 14px;border-radius:99px;white-space:nowrap}
+  .albcard .albacts{display:flex;gap:6px;padding:0 9px 10px}
+  .albcard .albacts button{flex:1;height:32px;border-radius:9px;background:var(--panel2);
+    border:1px solid var(--line);color:var(--fg);font-size:14px;cursor:pointer;padding:0;
+    transition:transform var(--t-fast) var(--ease),background var(--t-fast) linear}
+  .albcard .albacts button:active{transform:scale(.92)}
+  .albcard .albacts .del{color:var(--danger)}
+
+  /* Danh sách album trong hộp chọn. Cao tối đa rồi cuộn: có 50 album thì hộp
+     vẫn không tràn khỏi màn hình điện thoại. */
+  .picklist{max-height:44vh;overflow-y:auto;display:flex;flex-direction:column;gap:6px;
+    margin-bottom:4px}
+  .pickitem{display:flex;align-items:center;gap:10px;padding:10px 11px;border-radius:12px;
+    background:var(--panel2);border:1px solid var(--line);cursor:pointer;
+    transition:background var(--t-fast) linear,transform var(--t-fast) var(--ease)}
+  .pickitem:active{transform:scale(.98)}
+  @media (hover:hover){ .pickitem:hover{background:#22304a} }
+  .pickitem b{font-size:14.5px;font-weight:600;display:block;overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap}
+  .pickitem span{font-size:12px;color:var(--muted)}
+  .pickitem .pt{min-width:0;flex:1}
+
+  /* Hàng nút dưới mỗi thẻ bài: thêm bài đó vào một album.
+     Không nhét thêm nút đè lên ảnh nữa — bốn góc đã kín, thêm nữa là bấm nhầm. */
+  .cardacts{padding:0 9px 9px}
+  .cardacts button{width:100%;height:30px;border-radius:9px;background:var(--panel2);
+    border:1px solid var(--line);color:var(--muted);font-size:12px;cursor:pointer;padding:0;
+    transition:transform var(--t-fast) var(--ease),background var(--t-fast) linear,
+      color var(--t-fast) linear}
+  .cardacts button:active{transform:scale(.95)}
+  @media (hover:hover){ .cardacts button:hover{background:#22304a;color:var(--fg)} }
+
+  /* Hộp nhỏ giữa màn hình để đặt tên album.
+     KHÔNG dùng prompt() của trình duyệt: nó khoá cả trang cho tới khi có người
+     bấm, mà máy phát thì chạy kiểu kiosk không ai ngồi canh. */
+  .modal{position:fixed;inset:0;z-index:30;display:grid;place-items:center;
+    background:rgba(4,7,12,.66);padding:20px;
+    opacity:0;visibility:hidden;transition:opacity var(--t-med) var(--ease),
+      visibility 0s linear var(--t-med)}
+  .modal.open{opacity:1;visibility:visible;transition-delay:0s}
+  .modal .box{width:min(420px,100%);background:var(--panel);border:1px solid var(--line);
+    border-radius:16px;padding:16px;box-shadow:0 18px 44px rgba(0,0,0,.55);
+    transform:translateY(10px) scale(.98);transition:transform var(--t-med) var(--ease)}
+  .modal.open .box{transform:none}
+  .modal h4{margin:0 0 4px;font-size:16px}
+  .modal p{margin:0 0 12px;font-size:12.5px;color:var(--muted);line-height:1.5}
+  .modal input{width:100%;background:var(--panel2);border:1px solid var(--line);
+    color:var(--fg);border-radius:12px;padding:12px 13px;font-size:16px;outline:none}
+  .modal input:focus{border-color:var(--accent)}
+  .modal .row2{display:flex;gap:8px;margin-top:12px}
+  .modal .row2 .btn{flex:1}
+
   .spin{display:inline-block;width:14px;height:14px;border:2px solid #33405a;
     border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite}
   @keyframes sp{to{transform:rotate(360deg)}}
@@ -408,6 +474,7 @@
   <div class="tab active" data-tab="queue">Hàng chờ</div>
   <div class="tab" data-tab="results">Tìm kiếm</div>
   <div class="tab" data-tab="home" id="tabHomeLabel">Home</div>
+  <div class="tab" data-tab="albums">Album</div>
   <div class="tab" data-tab="me">Của tôi</div>
 </div>
 
@@ -461,6 +528,29 @@
   <div id="home"></div>
 </section>
 
+<section id="paneAlbums" style="display:none">
+  <div id="albBack" hidden>
+    <div class="mixhead">
+      <button class="btn" id="albBackBtn">‹ Album</button>
+      <div class="mt"><b id="albOpenName"></b><span id="albOpenSub"></span></div>
+      <button class="btn primary" id="albPlayAll">▶ Phát</button>
+    </div>
+  </div>
+
+  <div id="albListWrap">
+    <h3>Album <span class="sp" id="albCount"></span>
+      <button class="icon big" id="albNew" title="Tạo album mới">＋</button></h3>
+    <div id="albums"></div>
+    <div class="pager" id="albPager" hidden>
+      <button class="icon" id="albPrev" aria-label="Trang trước">‹</button>
+      <span id="albPageInfo"></span>
+      <button class="icon" id="albNext" aria-label="Trang sau">›</button>
+    </div>
+  </div>
+
+  <div id="albTracks"></div>
+</section>
+
 <section id="paneMe" style="display:none">
   <div id="gapiBox"></div>
   <h3 style="margin-top:18px">Playlist của tôi</h3>
@@ -503,8 +593,8 @@
     <button class="ctrl play" id="bPlay" title="Phát / tạm dừng">▶</button>
     <button class="ctrl" id="bNext" title="Bài kế">⏭</button>
     <button class="ctrl" id="bRepeat" title="Lặp lại">🔁</button>
-    <button class="ctrl" id="bRadio"
-            title="Tự phát tiếp bài cùng thể loại khi hết hàng chờ">📻</button>
+    <button class="ctrl" id="bAlbum"
+            title="Lưu hàng chờ này thành album">💿</button>
     <div class="volwrap">
       <button class="ctrl" id="bVol" title="Âm lượng">🔊</button>
       <div class="volpop" id="volPop">
@@ -518,11 +608,35 @@
   </div>
 </div>
 
+<div class="modal" id="pickModal">
+  <div class="box">
+    <h4>Thêm vào album</h4>
+    <p id="pickNote"></p>
+    <div id="pickList" class="picklist"></div>
+    <div class="row2">
+      <button class="btn" id="pickCancel">Huỷ</button>
+      <button class="btn primary" id="pickNew">＋ Album mới</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="albModal">
+  <div class="box">
+    <h4 id="albModalTitle">Lưu hàng chờ thành album</h4>
+    <p id="albModalNote"></p>
+    <input id="albName" type="text" maxlength="60" placeholder="Để trống = tự đặt tên">
+    <div class="row2">
+      <button class="btn" id="albCancel">Huỷ</button>
+      <button class="btn primary" id="albOk">Lưu</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
 // Phải khớp với hằng BUILD trong server.js.
-const BUILD = '2026-08-31.2';
+const BUILD = '2026-09-01.2';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, c =>
@@ -605,10 +719,11 @@ function render() {
   $('bShuffle').classList.toggle('on', st.shuffle);
   $('bRepeat').classList.toggle('on', st.repeat !== 'off');
   $('bRepeat').textContent = st.repeat === 'one' ? '🔂' : '🔁';
-  $('bRadio').classList.toggle('on', st.autoRadio);
-  // Đang đi tìm bài liên quan thì cho thấy, khỏi tưởng bấm hụt.
-  $('bRadio').textContent = st.radioBusy ? '⏳' : '📻';
-  // Nút bật/tắt phải lật ngay khi server đổi trạng thái.
+
+  // Nút lưu album mờ đi khi hàng chờ trống — không có gì để lưu.
+  $('bAlbum').disabled = !st.queue.length;
+  $('bAlbum').style.opacity = st.queue.length ? '' : '.45';
+  // Nút bật/tắt "nghe liên tục" phải lật ngay khi server đổi trạng thái.
   if (genres.length && pickedGenre) renderStationBar();
   if (!volTouch) { $('vol').value = st.volume; volLive(); }
 
@@ -694,6 +809,12 @@ function trackListHTML(key, items) {
       </div>
       <div class="t">${esc(t.title)}</div>
       <div class="s">${t.count ? `<span class="cnt">♪ ${t.count} lần</span> · ` : ''}${esc(t.author)}</div>
+      <div class="cardacts">
+        ${key === 'album'
+          ? `<button data-albrm="${esc(t.id)}" title="Bỏ bài này khỏi album">✕ Bỏ khỏi album</button>`
+          : `<button data-list="${key}" data-toalbum="${i}"
+                title="Thêm bài này vào một album">💿 Thêm vào album</button>`}
+      </div>
     </div>`).join('') + '</div>';
 }
 
@@ -708,6 +829,15 @@ function wireTrackList(el) {
       const arr = lists[b.dataset.list] || [];
       cmd('add', { item: arr[+b.dataset.add], addedBy: myName });
       toast('Đã thêm vào hàng chờ');
+      return;
+    }
+    if (b && b.dataset.albrm) {
+      removeFromOpenAlbum(b.dataset.albrm);
+      return;
+    }
+    if (b && b.dataset.list && b.dataset.toalbum !== undefined) {
+      const arr = lists[b.dataset.list] || [];
+      pickAlbumFor(arr[+b.dataset.toalbum]);
       return;
     }
     if (b && b.dataset.list && b.dataset.mixnew !== undefined) {
@@ -767,7 +897,8 @@ const isWide = () => wideQuery.matches;
 
 // 'queue' trỏ tới #side (cả cột phải) chứ không phải riêng #paneQueue: ở khổ
 // hẹp phải giấu luôn cái khung, nếu không nó vẫn chiếm chỗ dưới các tab khác.
-const PANES = { queue: 'side', results: 'paneResults', home: 'paneHome', me: 'paneMe' };
+const PANES = { queue: 'side', results: 'paneResults', home: 'paneHome',
+                albums: 'paneAlbums', me: 'paneMe' };
 let curTab = 'queue';
 
 function showTab(name) {
@@ -785,6 +916,9 @@ function showTab(name) {
     if (k === name) { el.classList.remove('paneIn'); void el.offsetWidth; el.classList.add('paneIn'); }
   }
   if (name === 'home' && !homeLoaded) loadHome();
+  // Album nạp lại mỗi lần mở tab: danh sách nhẹ (vài chục byte một album) và
+  // người ta vừa lưu xong là muốn thấy nó ngay.
+  if (name === 'albums') loadAlbums();
   if (name === 'me' && !meLoaded) loadMe();
 }
 document.querySelectorAll('.tab').forEach(tab => { tab.onclick = () => showTab(tab.dataset.tab); });
@@ -1467,10 +1601,296 @@ $('bNext').onclick = () => cmd('next');
 $('bPrev').onclick = () => cmd('prev');
 $('bShuffle').onclick = () => cmd('shuffle');
 $('bRepeat').onclick = () => cmd('repeat');
-$('bRadio').onclick = () => {
-  cmd('autoradio');
-  // st chưa kịp cập nhật nên đọc trạng thái hiện tại rồi lật.
-  toast(st?.autoRadio ? 'Tắt tự phát tiếp' : 'Bật tự phát tiếp bài cùng thể loại');
+// ---- Album -----------------------------------------------------------------
+// Cách dùng: tạo album trống trước, rồi gặp bài nào thích thì bấm "💿 Thêm vào
+// album" ngay trên thẻ bài đó. Có nhiều album thì hiện hộp cho chọn.
+// Muốn nghe thì sang tab Album, bấm ▶ để đẩy cả album sang hàng chờ và phát.
+//
+// (Nút 💿 ở thanh điều khiển làm việc ngược lại: lưu CẢ hàng chờ đang nghe
+// thành một album mới.)
+let albums = [];
+let albPage = 0;
+let openAlbum = null;     // album đang mở xem chi tiết, hoặc null
+
+function albumCardsHTML(items) {
+  return '<div class="grid">' + items.map((a) => `
+    <div class="card albcard" data-alb="${esc(a.id)}" title="Bấm để xem các bài trong album">
+      <div class="thumb">
+        ${a.thumb ? `<img src="${esc(a.thumb)}" alt="" loading="lazy" decoding="async">` : ''}
+        <span class="albbadge">${a.count ? '▶ ' + a.count + ' bài' : 'trống'}</span>
+      </div>
+      <div class="t">${esc(a.name)}</div>
+      <div class="s">${esc(a.authors || 'Chưa có bài nào')}</div>
+      <div class="albacts">
+        <button data-albplay="${esc(a.id)}" title="Phát album này ngay">▶</button>
+        <button data-albadd="${esc(a.id)}" title="Nối vào cuối hàng chờ">＋</button>
+        <button data-albren="${esc(a.id)}" title="Đổi tên">✎</button>
+        <button class="del" data-albdel="${esc(a.id)}" title="Xoá album">🗑</button>
+      </div>
+    </div>`).join('') + '</div>';
+}
+
+function renderAlbums() {
+  const per = isWide() ? 12 : 6;
+  const pages = Math.max(1, Math.ceil(albums.length / per));
+  albPage = Math.min(Math.max(0, albPage), pages - 1);
+  const slice = albums.slice(albPage * per, albPage * per + per);
+
+  $('albCount').textContent = albums.length ? albums.length + ' album' : '';
+  $('albums').innerHTML = albums.length
+    ? albumCardsHTML(slice)
+    : '<div class="empty">Chưa có album nào.<br>Bấm ＋ để tạo một album trống, rồi gặp bài nào thích thì bấm “💿 Thêm vào album”.</div>';
+
+  $('albPager').hidden = pages <= 1;
+  $('albPageInfo').textContent = `${albPage + 1}/${pages}`;
+  $('albPrev').disabled = albPage === 0;
+  $('albNext').disabled = albPage >= pages - 1;
+}
+
+$('albPrev').onclick = () => { albPage--; renderAlbums(); };
+$('albNext').onclick = () => { albPage++; renderAlbums(); };
+wideQuery.addEventListener('change', () => {
+  if (openAlbum) renderAlbumTracks();
+  else if (albums.length) renderAlbums();
+});
+
+async function loadAlbums({ keepOpen = false } = {}) {
+  try {
+    const j = await (await fetch('/api/albums')).json();
+    albums = j.albums || [];
+  } catch {
+    albums = [];
+  }
+  if (!keepOpen) closeAlbum();
+  renderAlbums();
+}
+
+// ---- xem chi tiết một album -------------------------------------------------
+// Mở album là ĐỔI NỘI DUNG của tab, không phải nhảy sang trang khác: bấm
+// "‹ Album" là quay lại danh sách, không mất tab đang đứng.
+function closeAlbum() {
+  openAlbum = null;
+  $('albBack').hidden = true;
+  $('albListWrap').hidden = false;
+  $('albTracks').innerHTML = '';
+}
+
+function renderAlbumTracks() {
+  if (!openAlbum) return;
+  $('albOpenName').textContent = openAlbum.name;
+  $('albOpenSub').textContent = openAlbum.tracks.length
+    ? openAlbum.tracks.length + ' bài'
+    : 'chưa có bài nào';
+  lists.album = openAlbum.tracks;
+  $('albTracks').innerHTML = openAlbum.tracks.length
+    ? trackListHTML('album', openAlbum.tracks)
+    : '<div class="empty">Album này còn trống.<br>Tìm bài rồi bấm “💿 Thêm vào album” để bỏ vào đây.</div>';
+}
+
+async function showAlbum(id) {
+  try {
+    const r = await fetch('/api/albums/' + encodeURIComponent(id));
+    if (!r.ok) throw new Error('Không mở được album');
+    openAlbum = await r.json();
+  } catch (err) {
+    return toast(err.message);
+  }
+  $('albListWrap').hidden = true;
+  $('albBack').hidden = false;
+  renderAlbumTracks();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+$('albBackBtn').onclick = closeAlbum;
+$('albPlayAll').onclick = () => {
+  if (!openAlbum) return;
+  if (!openAlbum.tracks.length) return toast('Album này chưa có bài nào');
+  cmd('album', { id: openAlbum.id });
+  toast('Đang phát album "' + openAlbum.name + '"');
+};
+wireTrackList($('albTracks'));
+
+$('albums').onclick = async (e) => {
+  const b = e.target.closest('button');
+  if (b && b.dataset.albplay) {
+    cmd('album', { id: b.dataset.albplay });
+    toast('Đang phát album');
+    return;
+  }
+  if (b && b.dataset.albadd) {
+    cmd('album', { id: b.dataset.albadd, mode: 'append' });
+    toast('Đã nối album vào hàng chờ');
+    return;
+  }
+  if (b && b.dataset.albren) {
+    const a = albums.find((x) => x.id === b.dataset.albren);
+    openAlbModal({
+      title: 'Đổi tên album',
+      note: 'Tên mới cho album này.',
+      value: a ? a.name : '',
+      onOk: async (name) => {
+        if (!name) return toast('Tên không được để trống');
+        await fetch('/api/albums/' + encodeURIComponent(b.dataset.albren) + '/rename', {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ name }),
+        });
+        loadAlbums();
+        toast('Đã đổi tên');
+      },
+    });
+    return;
+  }
+  if (b && b.dataset.albdel) {
+    const a = albums.find((x) => x.id === b.dataset.albdel);
+    openAlbModal({
+      title: 'Xoá album?',
+      note: `"${a ? a.name : ''}" sẽ bị xoá hẳn. Các bài trong hàng chờ không bị đụng tới.`,
+      hideInput: true,
+      okText: 'Xoá',
+      onOk: async () => {
+        await fetch('/api/albums/' + encodeURIComponent(b.dataset.albdel), { method: 'DELETE' });
+        loadAlbums();
+        toast('Đã xoá album');
+      },
+    });
+    return;
+  }
+  // Bấm vào thẻ = mở ra xem có những bài gì.
+  const card = e.target.closest('[data-alb]');
+  if (card) showAlbum(card.dataset.alb);
+};
+
+// ---- thêm MỘT bài vào album -------------------------------------------------
+let pickTrack = null;
+
+function pickAlbumFor(track) {
+  if (!track) return;
+  pickTrack = track;
+  // Chưa có album nào thì hỏi tên luôn, đừng bắt người ta bấm qua một hộp
+  // trống rồi mới được tạo.
+  if (!albums.length) return newAlbumWithTrack(track);
+  // Đúng một album thì bỏ thẳng vào, khỏi bắt chọn giữa một lựa chọn.
+  if (albums.length === 1) return addTrackToAlbum(albums[0].id, track);
+
+  $('pickNote').textContent = `Bỏ "${track.title}" vào album nào?`;
+  $('pickList').innerHTML = albums.map((a) => `
+    <div class="pickitem" data-pick="${esc(a.id)}">
+      <div class="pt"><b>${esc(a.name)}</b><span>${a.count} bài</span></div>
+      <span>＋</span>
+    </div>`).join('');
+  $('pickModal').classList.add('open');
+}
+
+function closePick() { $('pickModal').classList.remove('open'); }
+
+$('pickCancel').onclick = closePick;
+$('pickModal').onclick = (e) => { if (e.target === $('pickModal')) closePick(); };
+$('pickList').onclick = (e) => {
+  const it = e.target.closest('[data-pick]');
+  if (!it) return;
+  closePick();
+  addTrackToAlbum(it.dataset.pick, pickTrack);
+};
+$('pickNew').onclick = () => { closePick(); newAlbumWithTrack(pickTrack); };
+
+async function addTrackToAlbum(id, track) {
+  if (!track) return;
+  try {
+    const r = await fetch('/api/albums/' + encodeURIComponent(id) + '/tracks', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ item: track }),
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'Không thêm được');
+    // "Đã thêm" và "bài này có rồi" là hai chuyện khác nhau — nói đúng cái nào
+    // vừa xảy ra, đừng báo thành công chung chung.
+    if (j.added) toast(`Đã thêm vào "${j.album.name}"`);
+    else if (j.dup) toast(`"${j.album.name}" đã có bài này rồi`);
+    else if (j.full) toast(`"${j.album.name}" đã đầy`);
+    else toast('Bài này không thêm được (thiếu mã video)');
+    await loadAlbums({ keepOpen: true });
+    if (openAlbum && openAlbum.id === id) await showAlbum(id);
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+function newAlbumWithTrack(track) {
+  openAlbModal({
+    title: 'Album mới',
+    note: track ? `Tạo album mới và bỏ "${track.title}" vào.` : 'Đặt tên cho album mới.',
+    onOk: async (name) => {
+      const r = await fetch('/api/albums', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ empty: true, name }),
+      });
+      const j = await r.json();
+      if (!r.ok) return toast(j.error || 'Không tạo được album');
+      await loadAlbums({ keepOpen: true });
+      if (track) await addTrackToAlbum(j.album.id, track);
+      else toast(`Đã tạo album "${j.album.name}"`);
+    },
+  });
+}
+
+$('albNew').onclick = () => newAlbumWithTrack(null);
+
+async function removeFromOpenAlbum(videoId) {
+  if (!openAlbum) return;
+  const id = openAlbum.id;
+  await fetch(`/api/albums/${encodeURIComponent(id)}/tracks/${encodeURIComponent(videoId)}`,
+    { method: 'DELETE' });
+  await loadAlbums({ keepOpen: true });
+  await showAlbum(id);
+  toast('Đã bỏ khỏi album');
+}
+
+// ---- hộp nhỏ đặt tên / xác nhận --------------------------------------------
+let albOnOk = null;
+function openAlbModal({ title, note, value = '', hideInput = false, okText = 'Lưu', onOk }) {
+  $('albModalTitle').textContent = title;
+  $('albModalNote').textContent = note || '';
+  $('albName').value = value;
+  $('albName').hidden = hideInput;
+  $('albOk').textContent = okText;
+  albOnOk = onOk;
+  $('albModal').classList.add('open');
+  if (!hideInput) setTimeout(() => $('albName').focus(), 60);
+}
+function closeAlbModal() { $('albModal').classList.remove('open'); albOnOk = null; }
+
+$('albCancel').onclick = closeAlbModal;
+$('albOk').onclick = () => {
+  const fn = albOnOk;
+  const name = $('albName').value.trim();
+  closeAlbModal();
+  if (fn) fn(name);
+};
+$('albName').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('albOk').click(); });
+$('albModal').onclick = (e) => { if (e.target === $('albModal')) closeAlbModal(); };
+
+// Nút 💿 ở thanh điều khiển: lưu CẢ hàng chờ đang nghe thành một album mới.
+$('bAlbum').onclick = () => {
+  keepDock();
+  if (!st || !st.queue.length) return toast('Hàng chờ đang trống, chưa có gì để lưu');
+  openAlbModal({
+    title: 'Lưu hàng chờ thành album',
+    note: `${st.queue.length} bài đang trong hàng chờ sẽ được lưu lại.`,
+    onOk: async (name) => {
+      try {
+        const r = await fetch('/api/albums', {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ name }),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'Không lưu được');
+        await loadAlbums({ keepOpen: true });
+        toast('Đã lưu album "' + j.album.name + '"');
+      } catch (err) {
+        toast(err.message);
+      }
+    },
+  });
 };
 
 const seek = $('seek');
