@@ -130,6 +130,24 @@ try {
     'không cần tra DNS nữa thì phải bỏ luôn đoạn dự phòng khi tra hỏng');
   ok('bỏ hẳn đoạn dự phòng "tên miền không phân giải được"');
 
+  // Hồ sơ Chromium riêng: dùng chung hồ sơ thường thì chỉ cần một cửa sổ
+  // Chromium đang mở là lệnh kiosk bị gộp vào đó, mất hết cờ --kiosk và
+  // --autoplay-policy -> màn "Bật loa" hiện ra mỗi lần chọn bài (lỗi thật).
+  assert.ok(/--user-data-dir="[^"]*jukebox-kiosk-profile"/.test(launcher),
+    'launcher phải chạy Chromium bằng hồ sơ riêng');
+  const userDataCount = (launcher.match(/--user-data-dir=/g) || []).length;
+  assert.ok(userDataCount >= 2, `mọi lần mở trình duyệt phải dùng hồ sơ riêng (mới thấy ${userDataCount})`);
+  ok('kiosk dùng hồ sơ Chromium riêng => cờ tự phát luôn được áp dụng');
+
+  // Lỗi thật: cả dãy tab "Jukebox". Trình duyệt kiosk còn chạy mà launcher
+  // gọi thêm lần nữa thì Chromium chỉ nhét thêm tab rồi thoát ngay -> vòng lặp
+  // gọi tiếp -> thêm tab mãi. Phải kiểm có đang chạy chưa TRƯỚC khi mở.
+  const guardAt = launcher.indexOf('pgrep -f -- "--user-data-dir=');
+  const launchAt = launcher.indexOf('--autoplay-policy=no-user-gesture-required');
+  assert.ok(guardAt > 0 && guardAt < launchAt,
+    'phải kiểm trình duyệt kiosk đã chạy chưa, trước khi mở thêm');
+  ok('trình duyệt kiosk đang chạy thì chờ, không mở thêm tab');
+
   // Dò cổng: phải thử cả 80 lẫn 3000, vì service có thể chạy cổng nào cũng được.
   assert.match(launcher, /for p in 80 3000/, 'phải tự dò cổng 80 rồi 3000');
   ok('launcher tự dò cổng lúc khởi động thay vì ghi cứng');

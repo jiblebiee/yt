@@ -4,9 +4,12 @@
  * Không cần internet (dùng HTML giả lập cho phần parser).
  */
 process.env.PORT = process.env.PORT || '3999';
-// Không để bài test ghi đè lịch sử nghe thật trong data/.
+// Không để bài test ghi đè dữ liệu thật trong data/.
+// Thư mục MỚI mỗi lần chạy: server giờ nạp lại hàng chờ từ đĩa, nên dùng lại
+// thư mục cũ thì lần chạy trước để lại "lặp tất cả" và bài kiểm thử "hết hàng
+// chờ thì dừng" hỏng — hỏng vì dữ liệu cũ, không phải vì code.
 process.env.DATA_DIR = process.env.DATA_DIR ||
-  require('path').join(require('os').tmpdir(), 'jukebox-selftest-data');
+  require('fs').mkdtempSync(require('path').join(require('os').tmpdir(), 'jukebox-selftest-'));
 const assert = require('assert');
 const fs = require('fs');
 const WebSocket = require('ws');

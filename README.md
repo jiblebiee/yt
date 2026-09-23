@@ -571,6 +571,26 @@ bash setup-kiosk.sh
 Địa chỉ luôn là `127.0.0.1` — máy này mở trang của chính nó, không cần DNS,
 không cần mạng, không có gì để hỏng.
 
+#### Hồ sơ Chromium riêng cho kiosk
+
+Kiosk chạy Chromium bằng hồ sơ riêng (`~/.config/jukebox-kiosk-profile`), tách
+hẳn khỏi Chromium bạn vẫn dùng. Trước đây dùng chung hồ sơ, nên chỉ cần một
+cửa sổ Chromium thường đang mở là lệnh kiosk bị gộp vào đó: mất chế độ toàn
+màn hình, mất quyền tự phát (hiện màn "Bật loa" mỗi lần chọn bài), và mỗi vòng
+tự mở lại lại nhét thêm một tab — ra cả dãy tab cùng phát.
+
+Giờ thì:
+
+- Trình duyệt kiosk đang chạy thì launcher chờ, không bao giờ mở thêm tab.
+- Server chỉ cho **một** trang phát được phát. Mở trang phát thứ hai thì trang
+  cũ tự im và hiện nút **Phát ở đây** để giành lại khi cần.
+
+Có YouTube Premium? Hồ sơ riêng nghĩa là phải đăng nhập lại một lần cho kiosk:
+
+```bash
+bash setup-kiosk.sh --signin
+```
+
 #### Tự mở lại khi bị tắt
 
 Máy này chạy 24/7 làm bộ phát, không ai ngồi canh. Trình duyệt bị tắt (Alt+F4,
@@ -836,12 +856,13 @@ rồi restart — hoặc bấm nút xoá hàng chờ trên điện thoại như 
 ## Kiểm thử
 
 ```bash
-npm test                 # chạy cả sáu bộ
+npm test                 # chạy cả bảy bộ
 node test/selftest.js    # 41 bài: parser, lọc bài, ghép playlist, ẩn bài, luồng player<->remote
 node test/gapitest.js    # 18 bài: YouTube Data API (fetch giả lập)
 node test/audiotest.js   #  7 bài: âm lượng loa máy chủ (pactl giả lập)
 node test/persisttest.js # 11 bài: hàng chờ còn nguyên sau restart / mất điện
-node test/shelltest.js   #  9 bài: script cài đặt (dọn tên miền cũ, launcher kiosk)
+node test/playertest.js  #  8 bài: trang phát (YouTube giả): bài kẹt, nhiều tab
+node test/shelltest.js   # 11 bài: script cài đặt (dọn tên miền cũ, launcher kiosk)
 node test/uitest.js      # 78 bài: giao diện thật bằng Chromium (cần playwright)
 ```
 
@@ -872,6 +893,7 @@ yt-jukebox/
 │   ├── gapitest.js
 │   ├── audiotest.js
 │   ├── persisttest.js
+│   ├── playertest.js
 │   ├── shelltest.js
 │   └── uitest.js
 ├── yt-jukebox.service     # systemd unit

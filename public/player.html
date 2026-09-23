@@ -78,6 +78,16 @@
   </div>
 </div>
 
+<!-- Trang này bị trang phát KHÁC thay chỗ (mở ở tab khác / máy khác). -->
+<div class="gate" id="standby" style="display:none">
+  <div>
+    <h2>Đã chuyển sang trang phát khác</h2>
+    <p>Trang phát nhạc vừa được mở ở một tab hoặc máy khác, nên trang này đã
+       tắt tiếng để hai nơi không phát chồng lên nhau. Có thể đóng tab này.</p>
+    <button class="big" id="takeBtn">Phát ở đây</button>
+  </div>
+</div>
+
 <script src="https://www.youtube.com/iframe_api"></script>
 <script>
 const $ = (id) => document.getElementById(id);
@@ -90,10 +100,10 @@ const fmt = (s) => {
 
 let ws = null, player = null, ready = false, unlocked = false;
 let st = null, loadedId = null, lastSentPos = -1;
-// true cho tới lần nạp bài đầu tiên kể từ khi mở trang — xem apply().
-let firstLoad = true;
+let standby = false;   // bị trang phát khác thay chỗ -> im lặng, không tự nối lại
 let pending = null; // state that arrived before the API was ready
 let stuckSince = 0;  // theo dõi trường hợp tưởng phát được mà thật ra bị chặn
+let stuckRetried = false;
 
 // Đoạn WAV im lặng cực ngắn, chỉ dùng để thử xem trình duyệt có cho tự phát không.
 const SILENT_WAV =
@@ -185,11 +195,16 @@ function connect() {
   };
   ws.onclose = () => {
     $('dot').classList.remove('on');
+    // Đang chờ vì trang khác đã thay chỗ: KHÔNG tự nối lại, nếu không hai
+    // trang sẽ giành quyền phát qua lại mãi.
+    if (standby) { $('conn').textContent = 'Đang chờ — trang phát đã mở ở nơi khác'; return; }
     $('conn').textContent = 'Mất kết nối — đang thử lại…';
     setTimeout(connect, 2000);
   };
   ws.onmessage = (ev) => {
     const m = JSON.parse(ev.data);
+    if (m.type === 'standby') { goStandby(); return; }
+    if (standby) return;
     if (m.type === 'state') { st = m.state; render(st); ready ? apply(st) : (pending = st); }
     else if (m.type === 'cmd' && m.cmd === 'seek' && ready) {
       try { player.seekTo(m.to, true); } catch (e) {}
@@ -197,6 +212,25 @@ function connect() {
   };
 }
 connect();
+
+function goStandby() {
+  standby = true;
+  unlocked = false;
+  try { player && player.stopVideo && player.stopVideo(); } catch (e) {}
+  loadedId = null;
+  $('gate').style.display = 'none';
+  $('standby').style.display = '';
+  try { ws.close(); } catch (e) {}
+}
+
+// Chủ động bấm mới giành lại quyền phát — đây là cú bấm của người dùng nên
+// cũng mở luôn khoá tự phát của trình duyệt.
+$('takeBtn').onclick = () => {
+  standby = false;
+  $('standby').style.display = 'none';
+  unlock(false);
+  connect();
+};
 
 // --- Apply server state to the actual player ---------------------------
 function apply(s) {
@@ -213,19 +247,10 @@ function apply(s) {
   try { player.setVolume(s.playerVolume ?? s.volume); } catch (e) {}
 
   if (cur.id !== loadedId) {
-    // Lần nạp ĐẦU TIÊN kể từ khi mở trang là lúc phát
-    // tiếp sau khi Pi/trình duyệt khởi động lại: vào lại đúng giây đang nghe dở
-    // thay vì hát lại từ đầu. Các lần chuyển bài sau đó luôn bắt đầu từ 0 —
-    // vị trí lúc đó có thể còn là của bài trước.
-    // Dùng cờ riêng chứ không dựa vào loadedId === null: xoá hết hàng chờ cũng
-    // đặt loadedId về null, và bài thêm sau đó không được "phát tiếp" giữa chừng.
-    const resumeAt = firstLoad && s.position > 5 ? Math.floor(s.position) : 0;
-    firstLoad = false;
     loadedId = cur.id;
     try {
-      const opts = { videoId: cur.id, startSeconds: resumeAt };
-      if (s.playing) player.loadVideoById(opts);
-      else player.cueVideoById(opts);
+      if (s.playing) player.loadVideoById(cur.id);
+      else player.cueVideoById(cur.id);
     } catch (e) {}
     return;
   }
@@ -281,10 +306,35 @@ setInterval(() => {
     stuckSince = 0;
     return;
   }
-  if (!stuckSince) stuckSince = Date.now();
-  else if (Date.now() - stuckSince > 10000) {
+  if (!stuckSince) { stuckSince = Date.now(); stuckRetried = false; return; }
+  const stuckFor = Date.now() - stuckSince;
+
+  // Đứng yên 6 giây: THỬ PHÁT LẠI trước đã. Mạng chậm, YouTube nạp bài hụt
+  // một nhịp... đều làm vị trí đứng yên mà chẳng liên quan gì tới việc trình
+  // duyệt chặn tiếng. Trước đây cứ 10 giây đứng yên là hiện ngay màn "Bật loa",
+  // che mất cả trang dù chỉ cần gọi phát lại là chạy.
+  if (stuckFor > 6000 && !stuckRetried) {
+    stuckRetried = true;
+    try { player.playVideo(); } catch (e) {}
+    return;
+  }
+  if (stuckFor > 15000) {
     stuckSince = 0;
-    showGate('Trình duyệt đang chặn tự phát — bấm nút bên trên một lần.');
+    // Chỉ hiện màn "Bật loa" khi đúng là bị chặn: trang chưa từng được bấm
+    // lần nào VÀ trình duyệt không cho tự phát. Đã bấm rồi mà vẫn đứng thì
+    // lỗi nằm ở bài hát, không phải ở loa — bỏ qua bài đó, đừng đòi bấm nữa.
+    const clicked = navigator.userActivation ? navigator.userActivation.hasBeenActive : false;
+    let policyOk = false;
+    try {
+      policyOk = typeof navigator.getAutoplayPolicy === 'function' &&
+        navigator.getAutoplayPolicy('mediaelement') === 'allowed';
+    } catch (e) {}
+    if (!clicked && !policyOk) {
+      showGate('Trình duyệt đang chặn tự phát — bấm nút bên trên một lần.');
+    } else {
+      console.warn('[player] bài đứng yên 15 giây dù đã phát lại -> bỏ qua');
+      sendWs({ type: 'error', code: 'stuck' });
+    }
   }
 }, 1000);
 </script>

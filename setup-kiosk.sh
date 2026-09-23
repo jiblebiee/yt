@@ -6,6 +6,7 @@
 #   bash setup-kiosk.sh
 #
 # Gỡ:  bash setup-kiosk.sh --remove
+# Đăng nhập YouTube Premium cho kiosk:  bash setup-kiosk.sh --signin
 set -euo pipefail
 
 # Trang player LUÔN mở bằng 127.0.0.1 — máy này tự nói chuyện với chính nó,
@@ -22,6 +23,13 @@ HEALTH="${JUKEBOX_HEALTH:-}"
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AUDIO_SCRIPT="${JUKEBOX_AUDIO_SCRIPT:-$SRC_DIR/setup-audio.sh}"
 LAUNCHER="$HOME/.local/bin/jukebox-kiosk.sh"
+# Hồ sơ Chromium RIÊNG cho kiosk. Dùng chung hồ sơ mặc định thì chỉ cần có một
+# cửa sổ Chromium thường đang mở (tự khôi phục phiên, hay ai đó mở lướt web),
+# lệnh kiosk chỉ mở thêm một TAB trong cửa sổ đó và BỎ QUA mọi cờ — mất
+# --kiosk, mất --autoplay-policy. Kết quả: cửa sổ thường có thanh dấu trang, và
+# màn "Bật loa" hiện ra mỗi khi chọn bài. Hồ sơ riêng = tiến trình riêng = cờ
+# luôn được áp dụng, không đụng gì tới trình duyệt bạn dùng hằng ngày.
+PROFILE_DIR="$HOME/.config/jukebox-kiosk-profile"
 DESKTOP="$HOME/.config/autostart/jukebox-player.desktop"
 LABWC_AUTOSTART="$HOME/.config/labwc/autostart"
 WAYFIRE_INI="$HOME/.config/wayfire.ini"
@@ -206,6 +214,25 @@ if [[ -z "$BROWSER" ]]; then
 fi
 echo "==> Dùng trình duyệt: $BROWSER"
 
+# --------------------------------------------- đăng nhập YouTube cho kiosk
+# Kiosk chạy hồ sơ Chromium riêng, nên tài khoản đăng nhập ở Chromium thường
+# KHÔNG có mặt trong kiosk. Ai dùng YouTube Premium (để không có quảng cáo) thì
+# đăng nhập MỘT lần vào hồ sơ kiosk bằng lệnh này, rồi đóng cửa sổ lại.
+if [[ "${1:-}" == "--signin" ]]; then
+  mkdir -p "$(dirname "$STOP_FLAG")"
+  : > "$STOP_FLAG"          # tạm dừng kiosk, nếu không hai trình duyệt giành hồ sơ
+  pkill -f "jukebox-kiosk.sh" 2>/dev/null || true
+  pkill -f -- "--kiosk" 2>/dev/null || true
+  sleep 1
+  mkdir -p "$PROFILE_DIR"
+  echo "Đăng nhập YouTube trong cửa sổ vừa mở, xong thì ĐÓNG cửa sổ đó lại."
+  "$BROWSER" --user-data-dir="$PROFILE_DIR" --no-first-run \
+    --password-store=basic "https://www.youtube.com/" >/dev/null 2>&1 || true
+  rm -f "$STOP_FLAG"
+  echo "Đã lưu đăng nhập. Mở lại kiosk:  bash setup-kiosk.sh --start"
+  exit 0
+fi
+
 # --------------------------------------------------------------- script khởi chạy
 mkdir -p "$(dirname "$LAUNCHER")"
 cat > "$LAUNCHER" <<EOF
@@ -287,9 +314,8 @@ echo "==> Màn hình: \$SCREEN  (\$OZONE)" >&2
 
 # Chromium đang mở sẵn với cùng profile thì lệnh mới chỉ mở thêm tab và BỎ QUA
 # mọi cờ dòng lệnh (kể cả --kiosk và --autoplay-policy).
-if pgrep -f "$BROWSER" >/dev/null 2>&1; then
-  log "CẢNH BÁO: $BROWSER đã chạy sẵn — các cờ kiosk có thể bị bỏ qua"
-fi
+# (Không còn phải lo Chromium thường đang mở: kiosk chạy hồ sơ riêng.)
+mkdir -p "$PROFILE_DIR"
 
 # Chỉ cho phép MỘT launcher chạy. Script này được đăng ký ở cả XDG autostart lẫn
 # labwc/wayfire; desktop nào đọc nhiều nơi sẽ gọi hai lần, và bản thứ hai chỉ mở
@@ -368,6 +394,20 @@ while :; do
     exit 0
   fi
 
+  # Trình duyệt kiosk (hồ sơ riêng) VẪN đang chạy — ví dụ launcher cũ chết mà
+  # cửa sổ còn đó. Gọi thêm một lần lúc này thì Chromium KHÔNG mở cửa sổ mới mà
+  # nhét thêm một TAB vào cửa sổ cũ rồi thoát ngay; vòng lặp tưởng trình duyệt
+  # vừa tắt, lại gọi tiếp -> mỗi vòng thêm một tab (lỗi thật: cả dãy tab
+  # "Jukebox" cùng phát). Nên có rồi thì CHỜ nó tắt, không mở thêm.
+  if pgrep -f -- "--user-data-dir=$PROFILE_DIR" >/dev/null 2>&1; then
+    log "trình duyệt kiosk đang chạy sẵn -> chờ, không mở thêm tab"
+    while pgrep -f -- "--user-data-dir=$PROFILE_DIR" >/dev/null 2>&1; do
+      [ -f "\$STOP_FLAG" ] && exit 0
+      sleep 5
+    done
+    continue
+  fi
+
   # Cắt log nếu quá 1MB — Pi chạy bằng thẻ SD, đừng ghi vô hạn.
   [ -f "\$LOG" ] && [ "\$(stat -c%s "\$LOG" 2>/dev/null || echo 0)" -gt 1048576 ] && : > "\$LOG"
 
@@ -389,6 +429,7 @@ while :; do
     route_audio
     log "mở trình duyệt tới \$TARGET"
     $BROWSER \${OZONE:+"\$OZONE"} \\
+      --user-data-dir="$PROFILE_DIR" \\
       --kiosk \\
       --autoplay-policy=no-user-gesture-required \\
       --password-store=basic \\
@@ -406,7 +447,7 @@ while :; do
     write_err_page
     # --password-store=basic ở đây nữa: thiếu là hộp thoại keyring chặn luôn cả
     # trang báo lỗi, và bạn lại nhìn thấy một màn hình đứng im không rõ vì sao.
-    $BROWSER \${OZONE:+"\$OZONE"} --kiosk --no-first-run \\
+    $BROWSER \${OZONE:+"\$OZONE"} --user-data-dir="$PROFILE_DIR" --kiosk --no-first-run \\
       --password-store=basic --no-default-browser-check \\
       "file://\$ERR_PAGE" > "\$BROWSER_LOG" 2>&1
     RC=\$?
@@ -511,6 +552,10 @@ cat <<EOF
 
    bash setup-kiosk.sh --stop      # dừng, không tự mở lại nữa
    bash setup-kiosk.sh --start     # chạy lại
+
+ Kiosk dùng hồ sơ Chromium RIÊNG (không đụng Chromium bạn vẫn dùng).
+ Có YouTube Premium thì đăng nhập một lần cho kiosk:
+   bash setup-kiosk.sh --signin
 
  Gỡ tự khởi động:  bash setup-kiosk.sh --remove
 ===================================================

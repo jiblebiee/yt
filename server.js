@@ -25,7 +25,7 @@ const sysAudio = require('./audio.js');
 // Phải khớp với hằng BUILD trong public/remote.html. Trang điều khiển so sánh
 // hai giá trị này và cảnh báo nếu lệch — dấu hiệu service chưa được restart sau
 // khi cài bản mới (file tĩnh đọc từ đĩa nên mới, còn server.js vẫn là bản cũ).
-const BUILD = '2026-08-30.1';
+const BUILD = '2026-08-30.2';
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const HOST = process.env.HOST || '0.0.0.0';
@@ -2191,6 +2191,19 @@ wss.on('connection', (ws) => {
     if (m.type === 'hello') {
       ws.role = m.role === 'player' ? 'player' : 'remote';
       ws.name = String(m.name || '').slice(0, 40);
+      // CHỈ MỘT máy phát được phát. Hai trang /player mở cùng lúc (hai tab,
+      // hay kiosk bị mở chồng) thì cả hai cùng phát lệch nhau vài giây, và mỗi
+      // trang tự báo "hết bài" -> bỏ bài loạn xạ. Trang mở SAU được quyền phát;
+      // trang cũ chuyển sang chờ, tắt tiếng, và KHÔNG tự nối lại (nếu tự nối
+      // lại thì hai trang giành qua giành lại mãi).
+      if (ws.role === 'player') {
+        for (const other of wss.clients) {
+          if (other !== ws && other.role === 'player') {
+            other.role = 'standby';
+            send(other, { type: 'standby' });
+          }
+        }
+      }
       recount();
       if (ws.role === 'player') resumeIfDue();
       send(ws, { type: 'state', state: snapshot() });
