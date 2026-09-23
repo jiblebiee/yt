@@ -29,7 +29,6 @@ LAUNCHER="$HOME/.local/bin/jukebox-kiosk.sh"
 # --kiosk, mất --autoplay-policy. Kết quả: cửa sổ thường có thanh dấu trang, và
 # màn "Bật loa" hiện ra mỗi khi chọn bài. Hồ sơ riêng = tiến trình riêng = cờ
 # luôn được áp dụng, không đụng gì tới trình duyệt bạn dùng hằng ngày.
-PROFILE_DIR="$HOME/.config/jukebox-kiosk-profile"
 DESKTOP="$HOME/.config/autostart/jukebox-player.desktop"
 LABWC_AUTOSTART="$HOME/.config/labwc/autostart"
 WAYFIRE_INI="$HOME/.config/wayfire.ini"
@@ -41,25 +40,79 @@ if [[ $EUID -eq 0 ]]; then
   exit 1
 fi
 
+# ------------------------------------------------------- trình duyệt & hồ sơ
+# Dò sớm, vì cả phần chẩn đoán lẫn phần cài đều cần biết trình duyệt nào và hồ
+# sơ nằm ở đâu. Không có trình duyệt thì chưa báo lỗi ở đây — để --doctor vẫn
+# chạy được và nói ra rằng thiếu trình duyệt.
+BROWSER=""
+for c in chromium-browser chromium google-chrome google-chrome-stable; do
+  if command -v "$c" >/dev/null 2>&1; then BROWSER="$c"; break; fi
+done
+
+# Chromium trên Ubuntu là gói SNAP. Snap bị nhốt trong AppArmor: quyền "home"
+# chỉ cho đọc/ghi file KHÔNG ẨN trong thư mục nhà — tức là mọi thứ nằm trong
+# ~/.config đều bị từ chối. Đưa hồ sơ kiosk vào ~/.config như trên Raspberry Pi
+# OS thì trên Ubuntu Chromium không mở nổi, và kiosk im lặng không lên.
+# Chỗ ghi được của snap là ~/snap/<tên>/common/.
+SNAP_NAME=""
+if [[ -n "$BROWSER" ]]; then
+  BROWSER_REAL="$(readlink -f "$(command -v "$BROWSER")" 2>/dev/null || true)"
+  case "$BROWSER_REAL" in
+    /snap/*|*/snapd/*|/usr/bin/snap) SNAP_NAME="${BROWSER%%-browser}" ;;
+  esac
+  # chromium-browser trên Ubuntu là một script mồi gọi "snap run chromium".
+  if [[ -z "$SNAP_NAME" && -f "$BROWSER_REAL" ]] && grep -qs 'snap run' "$BROWSER_REAL"; then
+    SNAP_NAME="$(sed -n 's/.*snap run \([a-z0-9-]*\).*/\1/p' "$BROWSER_REAL" | head -1)"
+  fi
+  [[ "$SNAP_NAME" == "chromium-browser" ]] && SNAP_NAME="chromium"
+fi
+
+# Hồ sơ Chromium RIÊNG cho kiosk. Dùng chung hồ sơ mặc định thì chỉ cần có một
+# cửa sổ Chromium thường đang mở (tự khôi phục phiên, hay ai đó mở lướt web),
+# lệnh kiosk chỉ mở thêm một TAB trong cửa sổ đó và BỎ QUA mọi cờ — mất
+# --kiosk, mất --autoplay-policy. Kết quả: cửa sổ thường có thanh dấu trang, và
+# màn "Bật loa" hiện ra mỗi khi chọn bài. Hồ sơ riêng = tiến trình riêng = cờ
+# luôn được áp dụng, không đụng gì tới trình duyệt bạn dùng hằng ngày.
+if [[ -n "$SNAP_NAME" ]]; then
+  PROFILE_DIR="$HOME/snap/$SNAP_NAME/common/jukebox-kiosk-profile"
+else
+  PROFILE_DIR="$HOME/.config/jukebox-kiosk-profile"
+fi
+
 # ------------------------------------------------------------------ chẩn đoán
 # Gom mọi thứ liên quan tới kiosk vào một lần chạy, để không phải hỏi đi hỏi lại
 # từng mẩu một.
 if [[ "${1:-}" == "--doctor" ]]; then
   echo "===== CHẨN ĐOÁN KIOSK ====="
   echo
+  echo "-- 0. Máy --"
+  echo "   hệ điều hành: $( . /etc/os-release 2>/dev/null && echo "$PRETTY_NAME" || uname -sr )"
+  echo "   phiên: ${XDG_SESSION_TYPE:-?} · ${XDG_CURRENT_DESKTOP:-?}"
+
+  echo
   echo "-- 1. Trình duyệt --"
-  for c in chromium-browser chromium google-chrome; do
+  for c in chromium-browser chromium google-chrome google-chrome-stable; do
     if command -v "$c" >/dev/null 2>&1; then
       echo "   $c: $(command -v $c)"
       echo "   phiên bản: $($c --version 2>/dev/null | head -1)"
     fi
   done
-  command -v chromium-browser chromium google-chrome >/dev/null 2>&1 || echo "   KHÔNG tìm thấy Chromium"
+  [[ -n "$BROWSER" ]] || echo "   KHÔNG tìm thấy Chromium"
+  if [[ -n "$SNAP_NAME" ]]; then
+    echo "   dạng snap ($SNAP_NAME) -> hồ sơ kiosk phải nằm NGOÀI ~/.config"
+  fi
+  echo "   hồ sơ kiosk: $PROFILE_DIR"
+  if mkdir -p "$PROFILE_DIR" 2>/dev/null && touch "$PROFILE_DIR/.w" 2>/dev/null; then
+    rm -f "$PROFILE_DIR/.w"; echo "   ghi được vào hồ sơ: OK"
+  else
+    echo "   !!! KHÔNG ghi được vào hồ sơ kiosk -> trình duyệt sẽ không mở được"
+  fi
 
   echo
   echo "-- 2. Compositor đang chạy --"
   FOUND=0
-  for c in labwc wayfire lxsession openbox mutter weston cage; do
+  for c in labwc wayfire lxsession openbox mutter gnome-shell kwin_wayland kwin_x11 \
+           plasmashell xfwm4 marco cinnamon sway Hyprland weston cage; do
     if pgrep -x "$c" >/dev/null 2>&1; then echo "   $c (pid $(pgrep -x $c | head -1))"; FOUND=1; fi
   done
   [[ $FOUND -eq 0 ]] && echo "   KHÔNG có compositor nào -> không có desktop, kiosk không chạy được"
@@ -122,6 +175,12 @@ if [[ "${1:-}" == "--doctor" ]]; then
 
   echo
   echo "-- 6. Autostart --"
+  if [[ -f "$HOME/.config/systemd/user/jukebox-kiosk.service" ]]; then
+    echo "   systemd --user: $(systemctl --user is-enabled jukebox-kiosk.service 2>/dev/null || echo 'có file nhưng chưa bật')" \
+         "· đang chạy: $(systemctl --user is-active jukebox-kiosk.service 2>/dev/null || echo '?')"
+  else
+    echo "   systemd --user: chưa có"
+  fi
   [[ -f "$DESKTOP" ]] && echo "   XDG:    $DESKTOP (có)" || echo "   XDG:    chưa có"
   if [[ -f "$LABWC_AUTOSTART" ]] && grep -q "$MARK" "$LABWC_AUTOSTART"; then
     echo "   labwc:  $LABWC_AUTOSTART (có dòng jukebox)"
@@ -166,6 +225,7 @@ STOP_FLAG="$HOME/.local/share/jukebox-kiosk.stop"
 if [[ "${1:-}" == "--stop" ]]; then
   mkdir -p "$(dirname "$STOP_FLAG")"
   : > "$STOP_FLAG"
+  systemctl --user stop jukebox-kiosk.service 2>/dev/null || true
   pkill -f "jukebox-kiosk.sh" 2>/dev/null || true
   pkill -f -- "--kiosk" 2>/dev/null || true
   echo "Đã dừng kiosk và đặt cờ không tự mở lại."
@@ -192,6 +252,9 @@ if [[ "${1:-}" == "--remove" ]]; then
   pkill -f "jukebox-kiosk.sh" 2>/dev/null || true
   pkill -f -- "--kiosk" 2>/dev/null || true
   sleep 1
+  systemctl --user disable --now jukebox-kiosk.service 2>/dev/null || true
+  rm -f "$HOME/.config/systemd/user/jukebox-kiosk.service"
+  systemctl --user daemon-reload 2>/dev/null || true
   rm -f "$LAUNCHER" "$DESKTOP" "$STOP_FLAG" "$HOME/.local/share/jukebox-kiosk.lock"
   for f in "$LABWC_AUTOSTART" "$WAYFIRE_INI"; do
     if [[ -f "$f" ]] && grep -q "$MARK" "$f"; then
@@ -203,11 +266,7 @@ if [[ "${1:-}" == "--remove" ]]; then
   exit 0
 fi
 
-# ------------------------------------------------------------- tìm trình duyệt
-BROWSER=""
-for c in chromium-browser chromium google-chrome; do
-  if command -v "$c" >/dev/null 2>&1; then BROWSER="$c"; break; fi
-done
+# ----------------------------------------------- bắt buộc phải có trình duyệt
 if [[ -z "$BROWSER" ]]; then
   echo "Không tìm thấy Chromium. Cài trước:  sudo apt-get install -y chromium-browser" >&2
   exit 1
@@ -240,7 +299,11 @@ cat > "$LAUNCHER" <<EOF
 $MARK
 LOG="\$HOME/.local/share/jukebox-kiosk.log"
 BROWSER_LOG="\$HOME/.local/share/jukebox-browser.log"
-ERR_PAGE="\$HOME/.local/share/jukebox-error.html"
+# Trang báo lỗi phải nằm TRONG thư mục hồ sơ kiosk, không phải ~/.local/share:
+# Chromium bản snap (Ubuntu) không được phép đọc file trong thư mục ẩn của
+# thư mục nhà, nên để ở đó thì ngay cả trang báo lỗi cũng không mở được —
+# và bạn chỉ thấy màn hình trống, đúng lúc cần biết chuyện gì đang xảy ra.
+ERR_PAGE="$PROFILE_DIR/jukebox-error.html"
 LOCK="\$HOME/.local/share/jukebox-kiosk.lock"
 STOP_FLAG="\$HOME/.local/share/jukebox-kiosk.stop"
 mkdir -p "\$(dirname "\$LOG")"
@@ -332,6 +395,7 @@ fi
 # cũng không được tự chiếm màn hình. Chỉ --start mới xoá cờ.
 
 write_err_page() {
+  mkdir -p "\$(dirname "\$ERR_PAGE")"
   SVC="\$(systemctl is-active yt-jukebox 2>/dev/null || echo 'không rõ')"
   PORTS="\$(ss -lntH 2>/dev/null | awk '{print \$4}' | grep -oE '[0-9]+\$' | sort -un | tr '\\n' ' ')"
   [ -z "\$PORTS" ] && PORTS='không đọc được'
@@ -512,13 +576,45 @@ if [[ -f "$WAYFIRE_INI" ]]; then
   INSTALLED=1
 fi
 
+# 4. systemd --user — cách chắc ăn nhất trên các bản Linux desktop đời mới
+#    (Ubuntu/GNOME, KDE, Fedora...). GNOME có đọc ~/.config/autostart, nhưng
+#    systemd user service còn chạy đúng lúc hơn: chờ graphical-session.target,
+#    tức là chờ màn hình sẵn sàng rồi mới mở trình duyệt.
+#    Vòng giám sát trong launcher tự mở lại trình duyệt, nên ở đây KHÔNG đặt
+#    Restart — hai cơ chế tự mở lại chồng nhau chỉ gây rối.
+#    Chạy nhiều nơi cũng không sao: launcher có khoá flock, bản thứ hai tự thoát.
+USER_UNIT="$HOME/.config/systemd/user/jukebox-kiosk.service"
+if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
+  mkdir -p "$(dirname "$USER_UNIT")"
+  cat > "$USER_UNIT" <<EOF
+[Unit]
+Description=Jukebox kiosk (trang phát nhạc toàn màn hình)
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=$LAUNCHER
+Restart=no
+
+[Install]
+WantedBy=graphical-session.target
+EOF
+  systemctl --user daemon-reload 2>/dev/null || true
+  if systemctl --user enable jukebox-kiosk.service >/dev/null 2>&1; then
+    echo "==> Đã bật systemd user service: jukebox-kiosk.service"
+    INSTALLED=1
+  fi
+fi
+
 [[ $INSTALLED -eq 1 ]] || { echo "Không đăng ký được autostart nào." >&2; exit 1; }
 
 # --------------------------------------------------- compositor nào đang chạy
 # Mỗi compositor đọc một file khác nhau. Nói rõ file nào mới thật sự có tác
 # dụng, để khỏi tưởng đã cài xong mà thực ra không có gì chạy lúc khởi động.
 COMP=""
-for c in labwc wayfire lxsession openbox mutter; do
+for c in labwc wayfire lxsession openbox mutter gnome-shell kwin_wayland kwin_x11 \
+         xfwm4 marco cinnamon sway Hyprland; do
   if pgrep -x "$c" >/dev/null 2>&1; then COMP="$c"; break; fi
 done
 echo
@@ -532,18 +628,48 @@ case "$COMP" in
       echo "    !!! Chưa có $WAYFIRE_INI — autostart sẽ KHÔNG chạy." >&2
       echo "    Tạo file đó rồi chạy lại script này." >&2
     fi ;;
-  lxsession|openbox|mutter)
-    echo "==> Đang chạy $COMP -> file có tác dụng: $DESKTOP (XDG autostart)" ;;
+  gnome-shell|kwin_wayland|kwin_x11|xfwm4|marco|cinnamon|lxsession|openbox|mutter)
+    echo "==> Đang chạy $COMP -> $DESKTOP (XDG autostart) + systemd user service" ;;
   *)
     echo "==> Không nhận ra compositor nào đang chạy."
     echo "    Đã ghi cả 2-3 nơi; nếu khởi động lại vẫn không tự mở, gửi mình kết quả:"
     echo "      pgrep -a labwc wayfire lxsession openbox" ;;
 esac
 
+# ------------------------------------------------------- chạy thử ngay tại đây
+# Đăng ký autostart xong mà không thử thì mọi lỗi chỉ lộ ra sau khi khởi động
+# lại — lúc đó màn hình trống và chẳng có gì để lần. Có sẵn phiên desktop thì
+# chạy luôn, đợi vài giây rồi kiểm xem trình duyệt có lên thật không.
+SELFTEST_OK=""
+if [[ -n "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ]] || ls "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"/wayland-* >/dev/null 2>&1; then
+  rm -f "$STOP_FLAG"
+  echo
+  echo "==> Chạy thử kiosk (đợi tối đa 25 giây)…"
+  setsid "$LAUNCHER" >/dev/null 2>&1 &
+  for _ in $(seq 1 25); do
+    if pgrep -f -- "--user-data-dir=$PROFILE_DIR" >/dev/null 2>&1; then SELFTEST_OK=1; break; fi
+    sleep 1
+  done
+  if [[ -n "$SELFTEST_OK" ]]; then
+    echo "    OK: trình duyệt kiosk đã mở."
+  else
+    echo
+    echo "!!! Kiosk KHÔNG mở được. Mấy dòng cuối trong log:" >&2
+    tail -n 12 "$HOME/.local/share/jukebox-kiosk.log" 2>/dev/null >&2 || echo "    (chưa có log)" >&2
+    echo "    Lỗi của trình duyệt (nếu có):" >&2
+    tail -n 6 "$HOME/.local/share/jukebox-browser.log" 2>/dev/null >&2 || true
+    echo "    Chẩn đoán đầy đủ:  bash setup-kiosk.sh --doctor" >&2
+  fi
+else
+  echo
+  echo "==> Đang chạy qua SSH (không có màn hình ở đây) nên chưa thử được."
+  echo "    Thử trên chính máy đó, hoặc khởi động lại máy."
+fi
+
 cat <<EOF
 
 ===================================================
- Xong. Thử ngay mà không cần khởi động lại:
+ Xong. Chạy thử lại bất cứ lúc nào:
 
    $LAUNCHER
 

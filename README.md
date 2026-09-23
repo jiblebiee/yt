@@ -571,6 +571,31 @@ bash setup-kiosk.sh
 Địa chỉ luôn là `127.0.0.1` — máy này mở trang của chính nó, không cần DNS,
 không cần mạng, không có gì để hỏng.
 
+#### Chạy trên Ubuntu / Linux desktop khác (không phải Raspberry Pi OS)
+
+Server thì chạy ở đâu cũng được. Riêng phần kiosk có hai chỗ khác nhau giữa
+các bản Linux, và cả hai đều từng làm kiosk im lặng không lên trên Ubuntu 24.04:
+
+- **Chromium trên Ubuntu là gói snap.** Snap bị AppArmor nhốt: quyền `home`
+  chỉ cho đọc/ghi file **không ẩn** trong thư mục nhà. Hồ sơ kiosk để trong
+  `~/.config` là Chromium không mở nổi — mà cũng không báo gì. Script tự nhận
+  ra snap và chuyển hồ sơ sang `~/snap/chromium/common/jukebox-kiosk-profile`.
+  Trang báo lỗi cũng chuyển theo, nếu không thì đúng lúc cần biết lỗi gì lại
+  chỉ thấy màn hình trống.
+- **Mỗi desktop đọc một chỗ autostart khác nhau.** Raspberry Pi OS dùng labwc
+  hoặc wayfire; Ubuntu dùng GNOME. Ngoài `~/.config/autostart`, script còn
+  đăng ký một **systemd user service** (`jukebox-kiosk.service`) chờ
+  `graphical-session.target` — cách chắc ăn nhất trên GNOME, KDE và các bản
+  desktop đời mới.
+
+Cài xong, script **chạy thử ngay** và báo kết quả, thay vì để bạn khởi động lại
+rồi mới biết hỏng. Nếu không lên, nó in luôn mấy dòng log cuối. Chẩn đoán đầy
+đủ (hệ điều hành, phiên, trình duyệt, hồ sơ, autostart, âm thanh):
+
+```bash
+bash setup-kiosk.sh --doctor
+```
+
 #### Hồ sơ Chromium riêng cho kiosk
 
 Kiosk chạy Chromium bằng hồ sơ riêng (`~/.config/jukebox-kiosk-profile`), tách
@@ -862,7 +887,7 @@ node test/gapitest.js    # 18 bài: YouTube Data API (fetch giả lập)
 node test/audiotest.js   #  7 bài: âm lượng loa máy chủ (pactl giả lập)
 node test/persisttest.js # 11 bài: hàng chờ còn nguyên sau restart / mất điện
 node test/playertest.js  #  8 bài: trang phát (YouTube giả): bài kẹt, nhiều tab
-node test/shelltest.js   # 11 bài: script cài đặt (dọn tên miền cũ, launcher kiosk)
+node test/shelltest.js   # 15 bài: script cài đặt (dọn tên miền cũ, launcher kiosk)
 node test/uitest.js      # 78 bài: giao diện thật bằng Chromium (cần playwright)
 ```
 

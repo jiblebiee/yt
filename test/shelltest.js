@@ -148,6 +148,60 @@ try {
     'phải kiểm trình duyệt kiosk đã chạy chưa, trước khi mở thêm');
   ok('trình duyệt kiosk đang chạy thì chờ, không mở thêm tab');
 
+  // ------------------------------------------ Ubuntu: Chromium là gói snap
+  // Snap bị AppArmor nhốt: quyền "home" chỉ cho ghi file KHÔNG ẨN trong thư
+  // mục nhà, nên hồ sơ đặt trong ~/.config thì Chromium không mở nổi và kiosk
+  // im lặng không lên (đúng cảnh đã gặp trên Ubuntu 24.04).
+  const home2 = path.join(dir, 'home-snap');
+  const bin2 = path.join(dir, 'bin-snap');
+  fs.mkdirSync(home2, { recursive: true });
+  fs.mkdirSync(bin2, { recursive: true });
+  // chromium-browser trên Ubuntu là script mồi gọi "snap run chromium".
+  fs.writeFileSync(path.join(bin2, 'chromium-browser'),
+    '#!/bin/sh\nexec snap run chromium "$@"\n');
+  fs.chmodSync(path.join(bin2, 'chromium-browser'), 0o755);
+
+  const snapEnv = { HOME: home2, PATH: bin2 + ':' + process.env.PATH };
+  if (asUser) {
+    execFileSync('chmod', ['-R', 'a+rX', dir]);
+    execFileSync('chown', ['-R', '65534:65534', home2]);
+    execFileSync('setpriv',
+      ['--reuid=65534', '--regid=65534', '--clear-groups', 'bash', kioskScript],
+      { cwd: dir, encoding: 'utf8', env: { ...process.env, ...snapEnv } });
+  } else {
+    sh([kioskScript], snapEnv);
+  }
+  const snapLauncher = fs.readFileSync(path.join(home2, '.local/bin/jukebox-kiosk.sh'), 'utf8');
+  const prof = (snapLauncher.match(/--user-data-dir="([^"]+)"/) || [])[1] || '';
+  assert.ok(/\/snap\/chromium\/common\/jukebox-kiosk-profile$/.test(prof),
+    `Chromium snap: hồ sơ phải nằm trong ~/snap/chromium/common, đang là ${prof}`);
+  assert.ok(!/\.config/.test(prof), 'snap không đọc được thư mục ẩn trong home');
+  ok('Chromium bản snap (Ubuntu): hồ sơ kiosk đặt vào chỗ snap ghi được');
+
+  // Trang báo lỗi cũng vậy — để trong ~/.local/share thì snap không mở được,
+  // và bạn chỉ thấy màn hình trống đúng lúc cần biết lỗi gì.
+  assert.ok(!/file:\/\/[^"]*\.local\/share/.test(snapLauncher),
+    'trang báo lỗi không được nằm trong thư mục ẩn của home');
+  ok('trang báo lỗi nằm chỗ trình duyệt snap mở được');
+
+  // Máy không dùng snap thì vẫn giữ chỗ cũ trong ~/.config.
+  assert.ok(/--user-data-dir="[^"]*\.config\/jukebox-kiosk-profile"/.test(launcher),
+    'máy thường (không snap) vẫn để hồ sơ trong ~/.config');
+  ok('máy không dùng snap: hồ sơ vẫn nằm trong ~/.config như cũ');
+
+  // Linux desktop đời mới (Ubuntu/GNOME, KDE): đăng ký thêm systemd user
+  // service. GNOME có đọc ~/.config/autostart, nhưng dịch vụ user chờ đúng lúc
+  // màn hình sẵn sàng nên chắc ăn hơn.
+  const unit = path.join(home2, '.config/systemd/user/jukebox-kiosk.service');
+  if (fs.existsSync(unit)) {
+    const u = fs.readFileSync(unit, 'utf8');
+    assert.match(u, /WantedBy=graphical-session\.target/);
+    assert.match(u, /Restart=no/, 'launcher đã tự mở lại rồi, đừng để hai cơ chế chồng nhau');
+    ok('có systemd user service cho desktop đời mới (GNOME/KDE)');
+  } else {
+    ok('máy kiểm thử không có systemd --user nên bỏ qua phần dịch vụ user');
+  }
+
   // Dò cổng: phải thử cả 80 lẫn 3000, vì service có thể chạy cổng nào cũng được.
   assert.match(launcher, /for p in 80 3000/, 'phải tự dò cổng 80 rồi 3000');
   ok('launcher tự dò cổng lúc khởi động thay vì ghi cứng');

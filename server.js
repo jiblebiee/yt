@@ -25,7 +25,7 @@ const sysAudio = require('./audio.js');
 // Phải khớp với hằng BUILD trong public/remote.html. Trang điều khiển so sánh
 // hai giá trị này và cảnh báo nếu lệch — dấu hiệu service chưa được restart sau
 // khi cài bản mới (file tĩnh đọc từ đĩa nên mới, còn server.js vẫn là bản cũ).
-const BUILD = '2026-08-30.2';
+const BUILD = '2026-08-31.1';
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const HOST = process.env.HOST || '0.0.0.0';
