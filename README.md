@@ -588,6 +588,15 @@ các bản Linux, và cả hai đều từng làm kiosk im lặng không lên tr
   `graphical-session.target` — cách chắc ăn nhất trên GNOME, KDE và các bản
   desktop đời mới.
 
+Cài lại còn **dẹp launcher cũ** trước khi ghi đè. Bản cũ kẹt trong vòng lặp
+sẽ giữ khoá, và bản mới vừa cài chạy lên thấy khoá có người cầm nên ghi đúng
+một dòng *"đã có một launcher khác đang chạy -> thoát"* rồi biến mất — nhìn log
+thì tưởng bản mới không ăn thua, thật ra nó chưa từng được chạy.
+
+Khi trình duyệt thoát ngay (dưới 20 giây), log kiosk chép luôn mấy dòng cuối
+của chính trình duyệt sang. *"trình duyệt thoát (mã 21)"* một mình thì chẳng
+nói được gì.
+
 Cài xong, script **chạy thử ngay** và báo kết quả, thay vì để bạn khởi động lại
 rồi mới biết hỏng. Nếu không lên, nó in luôn mấy dòng log cuối. Chẩn đoán đầy
 đủ (hệ điều hành, phiên, trình duyệt, hồ sơ, autostart, âm thanh):
@@ -887,7 +896,7 @@ node test/gapitest.js    # 18 bài: YouTube Data API (fetch giả lập)
 node test/audiotest.js   #  7 bài: âm lượng loa máy chủ (pactl giả lập)
 node test/persisttest.js # 11 bài: hàng chờ còn nguyên sau restart / mất điện
 node test/playertest.js  #  8 bài: trang phát (YouTube giả): bài kẹt, nhiều tab
-node test/shelltest.js   # 15 bài: script cài đặt (dọn tên miền cũ, launcher kiosk)
+node test/shelltest.js   # 16 bài: script cài đặt (dọn tên miền cũ, launcher kiosk)
 node test/uitest.js      # 78 bài: giao diện thật bằng Chromium (cần playwright)
 ```
 

@@ -148,6 +148,52 @@ try {
     'phải kiểm trình duyệt kiosk đã chạy chưa, trước khi mở thêm');
   ok('trình duyệt kiosk đang chạy thì chờ, không mở thêm tab');
 
+  // --------------------------------- cài đè khi launcher CŨ vẫn đang chạy
+  // Lỗi thật trên Ubuntu: bản cũ kẹt trong vòng lặp và giữ khoá, nên bản mới
+  // vừa cài chạy lên là thấy khoá có người cầm rồi tự thoát — cài xong mà
+  // chẳng có gì đổi, log thì chỉ có một dòng "đã có launcher khác".
+  const fakeOld = path.join(dir, 'oldhome/.local/bin/jukebox-kiosk.sh');
+  fs.mkdirSync(path.dirname(fakeOld), { recursive: true });
+  fs.writeFileSync(fakeOld, '#!/bin/sh\nsleep 300\n');
+  fs.chmodSync(fakeOld, 0o755);
+  fs.mkdirSync(path.join(home, '.local/share'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.local/share/jukebox-kiosk.lock'), '');
+  if (asUser) {
+    execFileSync('chmod', ['-R', 'a+rX', path.join(dir, 'oldhome')]);
+    execFileSync('chown', ['-R', '65534:65534', home]);   // file vừa tạo đang thuộc root
+  }
+
+  // Chạy launcher giả TÁCH HẲN khỏi tiến trình node (setsid + nền): nếu dùng
+  // child_process.spawn thì mọi kiểm tra ở đây đều phải chờ vòng lặp sự kiện,
+  // mà bài kiểm thử này lại chạy đồng bộ — sẽ tưởng nó chưa chết.
+  const { spawnSync: run } = require('child_process');
+  const pidFile = path.join(dir, 'old.pid');
+  const startOld = asUser
+    ? `setsid setpriv --reuid=65534 --regid=65534 --clear-groups sh ${fakeOld} & echo $! > ${pidFile}`
+    : `setsid sh ${fakeOld} & echo $! > ${pidFile}`;
+  run('sh', ['-c', startOld], { stdio: 'ignore' });
+  run('sleep', ['0.5']);
+  const oldPid = Number(fs.readFileSync(pidFile, 'utf8').trim());
+  // Gọi thẳng pgrep, KHÔNG bọc trong sh -c: pgrep tự loại chính nó ra, nhưng
+  // cái "sh -c pgrep ..." bọc ngoài thì lại chứa đúng chuỗi cần tìm, nên lần
+  // nào cũng thấy "còn sống" — bài kiểm thử sai vì chính nó.
+  const alive = () => run('pgrep', ['-f', fakeOld]).status === 0;
+  assert.ok(alive(), 'launcher giả phải đang chạy');
+
+  if (asUser) {
+    execFileSync('setpriv',
+      ['--reuid=65534', '--regid=65534', '--clear-groups', 'bash', kioskScript],
+      { cwd: dir, encoding: 'utf8', env: { ...process.env, ...kioskEnv } });
+  } else {
+    sh([kioskScript], kioskEnv);
+  }
+  run('sleep', ['1']);
+  assert.ok(!alive(),
+    `cài lại phải dẹp launcher cũ (pid ${oldPid}), nếu không bản mới không bao giờ chạy được`);
+  assert.ok(!fs.existsSync(path.join(home, '.local/share/jukebox-kiosk.lock')),
+    'phải xoá khoá cũ, nếu không bản mới vẫn bị chặn');
+  ok('cài đè: dẹp launcher cũ đang chạy và xoá khoá nó để lại');
+
   // ------------------------------------------ Ubuntu: Chromium là gói snap
   // Snap bị AppArmor nhốt: quyền "home" chỉ cho ghi file KHÔNG ẨN trong thư
   // mục nhà, nên hồ sơ đặt trong ~/.config thì Chromium không mở nổi và kiosk

@@ -176,8 +176,9 @@ if [[ "${1:-}" == "--doctor" ]]; then
   echo
   echo "-- 6. Autostart --"
   if [[ -f "$HOME/.config/systemd/user/jukebox-kiosk.service" ]]; then
-    echo "   systemd --user: $(systemctl --user is-enabled jukebox-kiosk.service 2>/dev/null || echo 'có file nhưng chưa bật')" \
-         "· đang chạy: $(systemctl --user is-active jukebox-kiosk.service 2>/dev/null || echo '?')"
+    UEN="$(systemctl --user is-enabled jukebox-kiosk.service 2>/dev/null || echo 'chưa bật')"
+    UAC="$(systemctl --user is-active jukebox-kiosk.service 2>/dev/null || echo 'không chạy')"
+    echo "   systemd --user: $UEN · $UAC"
   else
     echo "   systemd --user: chưa có"
   fi
@@ -211,6 +212,30 @@ if [[ "${1:-}" == "--doctor" ]]; then
   echo
   echo "-- 8. Log kiosk (10 dòng cuối) --"
   tail -10 "$HOME/.local/share/jukebox-kiosk.log" 2>/dev/null | sed 's/^/   /' || echo "   chưa có log"
+
+  echo
+  echo "-- 9. Trình duyệt nói gì (6 dòng cuối) --"
+  # Vì sao cần: log kiosk chỉ nói "trình duyệt thoát (mã 21)". Lý do THẬT nằm ở
+  # log của chính trình duyệt — ví dụ không tạo được thư mục hồ sơ.
+  if [[ -s "$HOME/.local/share/jukebox-browser.log" ]]; then
+    tail -6 "$HOME/.local/share/jukebox-browser.log" | sed 's/^/   /'
+  else
+    echo "   (trống)"
+  fi
+
+  echo
+  echo "-- 10. Launcher đang chạy --"
+  RUNNING="$(pgrep -f "jukebox-kiosk.sh" 2>/dev/null | tr '\n' ' ')"
+  if [[ -n "${RUNNING// /}" ]]; then
+    echo "   PID: $RUNNING"
+    # Launcher CŨ (bản trước) vẫn chạy thì nó giữ khoá, và bản mới vừa cài chỉ
+    # ghi được đúng một dòng "đã có một launcher khác đang chạy -> thoát".
+    OLDPROF="$(pgrep -af -- "--user-data-dir=" 2>/dev/null | sed -n 's/.*--user-data-dir=\([^ ]*\).*/\1/p' | sort -u | tr '\n' ' ')"
+    [[ -n "${OLDPROF// /}" ]] && echo "   hồ sơ đang dùng: $OLDPROF"
+    echo "   (đúng ra phải là: $PROFILE_DIR)"
+  else
+    echo "   không có launcher nào đang chạy"
+  fi
 
   echo
   echo "===== HẾT ====="
@@ -294,6 +319,25 @@ fi
 
 # --------------------------------------------------------------- script khởi chạy
 mkdir -p "$(dirname "$LAUNCHER")"
+# Launcher CŨ đang chạy thì phải dẹp TRƯỚC khi ghi đè.
+#
+# Chuyện đã xảy ra thật trên Ubuntu: bản cũ để hồ sơ trong ~/.config, snap
+# không ghi được nên Chromium thoát ngay (mã 21), bản cũ cứ thế lặp mãi và GIỮ
+# KHOÁ. Cài bản mới xong, launcher mới chạy lên thấy khoá đã có người cầm nên
+# ghi đúng một dòng "đã có một launcher khác đang chạy -> thoát" rồi biến mất.
+# Nhìn log thì tưởng bản mới không ăn thua, thật ra nó chưa từng được chạy.
+OLD_PIDS="$(pgrep -f "jukebox-kiosk.sh" 2>/dev/null | grep -v "^$$\$" | tr '\n' ' ' || true)"
+if [[ -n "${OLD_PIDS// /}" ]]; then
+  echo "==> Dừng launcher cũ đang chạy (PID: $OLD_PIDS)"
+  # Cờ dừng để vòng giám sát của bản cũ không mở lại trình duyệt giữa chừng.
+  mkdir -p "$(dirname "$STOP_FLAG")" && : > "$STOP_FLAG"
+  pkill -f "jukebox-kiosk.sh" 2>/dev/null || true
+  pkill -f -- "--user-data-dir=$HOME/.config/jukebox-kiosk-profile" 2>/dev/null || true
+  pkill -f -- "--kiosk" 2>/dev/null || true
+  sleep 2
+  rm -f "$HOME/.local/share/jukebox-kiosk.lock" "$STOP_FLAG"
+fi
+
 cat > "$LAUNCHER" <<EOF
 #!/usr/bin/env bash
 $MARK
@@ -527,6 +571,14 @@ while :; do
   [ "\$FAILS" -ge 3 ] && DELAY=30
   [ "\$FAILS" -ge 6 ] && DELAY=120
   log "trình duyệt thoát (mã \$RC) sau \${RUNTIME}s -> mở lại sau \${DELAY}s (lỗi liên tiếp: \$FAILS)"
+  # Thoát ngay lập tức = không mở nổi. "mã 21" một mình chẳng nói được gì, nên
+  # chép luôn mấy dòng cuối của chính trình duyệt sang đây.
+  if [ "\$RUNTIME" -lt 20 ] && [ -s "\$BROWSER_LOG" ]; then
+    tail -n 5 "\$BROWSER_LOG" | while IFS= read -r line; do log "  trình duyệt: \$line"; done
+    if grep -qiE 'data directory|profile|permission denied|apparmor|cannot create' "\$BROWSER_LOG"; then
+      log "  => nhiều khả năng KHÔNG ghi được hồ sơ: \$PROFILE_DIR"
+    fi
+  fi
   sleep "\$DELAY"
 done
 EOF
